@@ -19,3 +19,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - % asistencia = planes a los que fue ÷ planes del periodo
 - % casa = veces que puso casa ÷ planes a los que fue
 - Promedio por mes = asistencias ÷ meses con planes
+
+## Probar sin tocar datos reales
+
+Añade `?demo` a la dirección (`…/BMSN-SCORE/?demo`): carga datos inventados y nada se guarda.

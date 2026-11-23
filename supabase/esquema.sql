@@ -144,3 +144,10 @@ grant execute on function public.votar(uuid, text) to authenticated;
 grant execute on function public.guardar_plan(uuid, date, text, uuid, uuid[], text) to authenticated;
 grant execute on function public.resultados() to anon, authenticated;
 grant execute on function public.es_admin() to anon, authenticated;
+
+-- Permisos de tabla (los proyectos nuevos de Supabase no los dan por defecto).
+grant usage on schema public to anon, authenticated;
+grant select on public.personas, public.planes, public.asistencias, public.encuestas to anon, authenticated;
+grant insert, update, delete on public.personas, public.planes, public.asistencias, public.encuestas to authenticated;
+grant select, delete on public.votos to authenticated;
+grant select on public.admins to authenticated;

@@ -2,126 +2,52 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f0f0e" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BMSN">
   <title>BMSN</title>
-  <meta name="description" content="BMSN: anotación de planes, asistencia, anfitriones y encuestas mensuales.">
+  <meta name="description" content="BMSN: planes, asistencia, anfitriones y encuestas del mes.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23161615'/%3E%3Ctext x='32' y='43' font-family='Georgia,serif' font-size='30' fill='%23f7f6f2' text-anchor='middle'%3EB%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="top">
-    <div class="marca">BMSN</div>
-    <nav class="tabs">
-      <button class="tab activa" data-tab="resumen">Resumen</button>
-      <button class="tab" data-tab="planes">Planes</button>
-      <button class="tab" data-tab="personas">Personas</button>
-      <button class="tab" data-tab="encuestas">Encuestas</button>
-    </nav>
-    <div class="sesion" id="sesion"></div>
+    <a class="logo" href="#inicio" aria-label="BMSN inicio">BMSN</a>
+    <button class="cuenta" id="btn-cuenta" aria-label="Cuenta"></button>
   </header>
 
-  <main>
-    <div id="aviso" class="aviso" hidden></div>
+  <main id="vista"><div class="cargando">Cargando…</div></main>
 
-    <!-- RESUMEN -->
-    <section id="resumen" class="panel activo">
-      <div class="fila-titulo">
-        <h1>Promedios</h1>
-        <label class="filtro">Periodo <select id="filtro-periodo"></select></label>
-      </div>
-      <div class="kpis" id="kpis"></div>
-      <div class="tabla-wrap">
-        <table class="tabla" id="tabla-promedios">
-          <thead>
-            <tr>
-              <th data-orden="nombre">Persona</th>
-              <th data-orden="asistencias" class="num">Asistencias</th>
-              <th data-orden="pctAsistencia" class="num">% asistencia</th>
-              <th data-orden="casas" class="num">Puso casa</th>
-              <th data-orden="pctCasa" class="num">% casa / asistencias</th>
-              <th data-orden="promMes" class="num">Prom. por mes</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <p class="nota">% asistencia = planes a los que fue ÷ planes del periodo · % casa = veces que puso casa ÷ planes a los que fue · Prom. por mes = asistencias ÷ meses con planes.</p>
-    </section>
+  <nav class="nav" aria-label="Secciones">
+    <a href="#inicio" data-nav="inicio">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10l8-6 8 6v10h-5v-6H9v6z"/></svg><span>Inicio</span>
+    </a>
+    <a href="#planes" data-nav="planes">
+      <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Planes</span>
+    </a>
+    <button class="fab" id="btn-nuevo" aria-label="Anotar plan">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <a href="#encuestas" data-nav="encuestas">
+      <svg viewBox="0 0 24 24"><path d="M5 20V12M12 20V4M19 20v-6"/></svg><span>Encuestas</span>
+    </a>
+    <a href="#gente" data-nav="gente">
+      <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c1.8.7 3 2.4 3.5 5.2"/></svg><span>Gente</span>
+    </a>
+  </nav>
 
-    <!-- PLANES -->
-    <section id="planes" class="panel">
-      <h1>Planes</h1>
-      <details class="caja solo-admin" id="caja-plan">
-        <summary id="titulo-form-plan">➕ Anotar un plan</summary>
-        <form id="form-plan" class="form">
-          <input type="hidden" name="id">
-          <div class="grid2">
-            <label>Fecha<input type="date" name="fecha" required></label>
-            <label>Nombre del plan<input type="text" name="titulo" maxlength="80" placeholder="Asado, cumpleaños, peli…" required></label>
-          </div>
-          <label>¿Quién puso casa?
-            <select name="anfitrion"></select>
-          </label>
-          <fieldset>
-            <legend>¿Quién asistió?</legend>
-            <div class="chips" id="chips-asistentes"></div>
-          </fieldset>
-          <label>Notas (opcional)<input type="text" name="notas" maxlength="200"></label>
-          <div class="botones">
-            <button class="btn" type="submit">Guardar plan</button>
-            <button class="btn sec" type="button" id="cancelar-plan" hidden>Cancelar edición</button>
-          </div>
-        </form>
-      </details>
-      <div id="lista-planes" class="lista"></div>
-    </section>
-
-    <!-- PERSONAS -->
-    <section id="personas" class="panel">
-      <h1>Personas</h1>
-      <form id="form-persona" class="caja form-linea solo-admin">
-        <input type="text" name="nombre" maxlength="40" placeholder="Nombre de la persona" required>
-        <button class="btn" type="submit">Añadir</button>
-      </form>
-      <div id="lista-personas" class="lista"></div>
-    </section>
-
-    <!-- ENCUESTAS -->
-    <section id="encuestas" class="panel">
-      <h1>Encuestas mensuales</h1>
-      <details class="caja solo-admin">
-        <summary>➕ Crear encuesta</summary>
-        <form id="form-encuesta" class="form">
-          <div class="grid2">
-            <label>Mes<input type="month" name="mes" required></label>
-            <label>Pregunta<input type="text" name="pregunta" maxlength="120" placeholder="¿Mejor plan del mes?" required></label>
-          </div>
-          <label class="check"><input type="checkbox" name="usarPersonas"> Usar las personas como opciones</label>
-          <label>Opciones (una por línea)<textarea name="opciones" rows="4" placeholder="Opción A&#10;Opción B"></textarea></label>
-          <button class="btn" type="submit">Crear encuesta</button>
-        </form>
-      </details>
-      <p class="nota">Para votar hay que entrar con un correo (Gmail o cualquiera). Llega un enlace para verificarlo. Un voto por correo y encuesta; si vuelves a votar, cambia tu voto.</p>
-      <div id="lista-encuestas" class="lista"></div>
-    </section>
-  </main>
-
-  <!-- LOGIN -->
-  <dialog id="dlg-login" class="dialogo">
-    <form method="dialog" class="cerrar-x"><button aria-label="Cerrar">✕</button></form>
-    <h2>Entrar con tu correo</h2>
-    <form id="form-email" class="form">
-      <label>Correo electrónico<input type="email" name="email" required autocomplete="email" placeholder="tucorreo@gmail.com"></label>
-      <button class="btn" type="submit">Enviarme el enlace</button>
-    </form>
-    <div id="enviado" hidden>
-      <p>📩 Te enviamos un enlace a <strong id="txt-correo"></strong>.</p>
-      <p class="nota">Ábrelo <strong>desde este mismo teléfono o computadora</strong> y entrarás automáticamente. Si no lo ves, revisa la carpeta de spam.</p>
-      <button class="btn sec" type="button" id="otro-correo">Usar otro correo</button>
-    </div>
-    <p class="error" id="err-login"></p>
+  <dialog class="hoja" id="hoja">
+    <div class="hoja-asa" aria-hidden="true"></div>
+    <div id="hoja-contenido"></div>
   </dialog>
 
-  <footer class="pie">BMSN</footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
