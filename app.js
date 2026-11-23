@@ -170,7 +170,7 @@
           migracion: true, fotos: true, claveGrupo: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
-      reclamarAdmin: async () => true,
+      reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
       async guardarPlan(p) {
         let pl = planes.find((x) => x.id === p.id);
         if (!pl) { pl = { id: uid() }; planes.push(pl); }
@@ -304,6 +304,7 @@
     const inst = v === "inicio" ? bannerInstalar() : "";
     $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
+    document.body.classList.toggle("miembro", !!S.user && !S.admin);
   }
 
   const bannerError = (m) => `<div class="banner error">${m}</div>`;
@@ -311,7 +312,7 @@
   function bannerSesion(texto) {
     if (S.admin) return "";
     if (!S.user) return `<div class="banner"><span>${texto}</span><button class="btn chico" data-a="login">Entrar</button></div>`;
-    return `<div class="banner"><span>Tu cuenta puede votar, pero solo el admin puede anotar.</span></div>`;
+    return `<div class="banner"><span>Puedes votar y editar tu perfil. Los planes los anota el admin.</span></div>`;
   }
 
   function renderCuenta() {
@@ -344,7 +345,7 @@
       return bannerSesion("Entra con tu correo para empezar a anotar.") + `<div class="vacio">
         <div class="h2">Bienvenido a BMSN</div>
         <p>Primero añade a la gente del grupo.<br>Después anota cada plan con el botón ＋.</p>
-        <button class="btn" data-a="nueva-persona">Añadir personas</button>
+        <button class="btn solo-gestion" data-a="nueva-persona">Añadir personas</button>
       </div>`;
     }
     const planes = planesPeriodo();
@@ -384,7 +385,7 @@
             </span>
             <span class="der"><div class="big">${val(r)}</div></span>
           </button>`).join("")}</div>` : "")
-        : `<div class="vacio"><p>No hay planes en este periodo.</p><button class="btn" data-a="nuevo-plan">＋ Anotar un plan</button></div>`}
+        : `<div class="vacio"><p>No hay planes en este periodo.</p><button class="btn solo-gestion" data-a="nuevo-plan">＋ Anotar un plan</button></div>`}
       </div></div>`;
   }
 
@@ -409,7 +410,7 @@
     if (!S.planes.length) {
       return head + bannerSesion("Entra con tu correo para anotar planes.") + `<div class="vacio">
         <p>Todavía no hay planes anotados.</p>
-        <button class="btn" data-a="nuevo-plan">＋ Anotar el primero</button></div>`;
+        <button class="btn solo-gestion" data-a="nuevo-plan">＋ Anotar el primero</button></div>`;
     }
     const grupos = {};
     S.planes.forEach((p) => (grupos[p.fecha.slice(0, 7)] ??= []).push(p));
@@ -612,7 +613,7 @@
     const st = Object.fromEntries(stats(S.planes).map((r) => [r.p.id, r]));
     const head = `<div class="titulo-vista"><h1 class="h2">Gente</h1>${S.admin ? `<button class="btn chico" data-a="nueva-persona">＋ Añadir</button>` : ""}</div>`;
     if (!S.personas.length) {
-      return head + bannerSesion("Entra con tu correo para añadir gente.") + `<div class="vacio"><p>Aún no hay nadie.</p><button class="btn" data-a="nueva-persona">Añadir personas</button></div>`;
+      return head + bannerSesion("Entra con tu correo para añadir gente.") + `<div class="vacio"><p>Aún no hay nadie.</p><button class="btn solo-gestion" data-a="nueva-persona">Añadir personas</button></div>`;
     }
     return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${S.personas.map((p) => {
       const r = st[p.id];

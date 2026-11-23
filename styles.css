@@ -674,3 +674,7 @@ body.es-admin .btn-admin-top { display: grid; }
 }
 .codigo-cajas span.activa { border-color: var(--neon); box-shadow: 0 0 0 2px rgb(200 255 46 / .25); }
 .codigo-cajas span:not(:empty) { border-color: #3a3a40; }
+
+/* ---------- Miembros (no admin): sin controles de gestión ---------- */
+body.miembro .solo-gestion, body.miembro .fab { display: none !important; }
+body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
