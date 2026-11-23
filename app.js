@@ -292,7 +292,7 @@
           <button class="fila" data-a="perfil" data-id="${r.p.id}">
             <span class="pos">${i + 1 + (rk.length - resto.length)}</span>${avatar(r.p)}
             <span class="cuerpo"><div class="nom">${esc(r.p.nombre)}</div>
-              <div class="det">${r.asistencias} de ${r.total} planes · puso casa ${r.casas}</div>
+              <div class="det">${r.asistencias} de ${r.total} planes · 🏠 ${r.casas}</div>
               <div class="barrita"><i style="width:${S.metrica === "casas" ? (r.casas / max) * 100 : (r.pctAsistencia || 0) * 100}%"></i></div>
             </span>
             <span class="der"><div class="big">${val(r)}</div></span>
