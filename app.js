@@ -146,6 +146,10 @@
         if (error) throw error;
       },
       ponerClaveGrupo: (clave) => q(sb.rpc("poner_clave_grupo", { p_clave: normalizarClave(clave) })),
+      async entrarConCodigo(email, codigo) {
+        const { error } = await sb.auth.verifyOtp({ email, token: codigo, type: "email" });
+        if (error) throw new Error(/expired|invalid/i.test(error.message) ? "Código incorrecto o vencido. Pide uno nuevo." : error.message);
+      },
       salir: () => sb.auth.signOut(),
       alCambiarSesion: (fn) => sb.auth.onAuthStateChange((ev, s) => setTimeout(() => fn(s?.user ?? null), 0)),
     };
@@ -231,6 +235,7 @@
         user = { id: "demo", email }; setTimeout(() => listener(user), 200);
       },
       async ponerClaveGrupo() {},
+      async entrarConCodigo(email) { user = { id: "demo", email }; setTimeout(() => listener(user), 200); },
       alCambiarSesion(fn) { listener = fn; fn(null); },
     };
   }
@@ -679,9 +684,13 @@
     abrirHoja(`${cabHoja("Revisa tu correo")}
       <div class="vacio" id="login-enviado" style="padding:10px 0">
         <div class="display" style="font-size:60px">✉︎</div>
-        <p>Enviamos un enlace a <b style="color:var(--ink)">${esc(email)}</b>.<br>Ábrelo <b style="color:var(--ink)">en este mismo dispositivo</b> para entrar.</p>
-        <p style="font-size:13px">¿No llega? Mira en spam o espera un minuto.</p>
+        <p>Enviamos un correo a <b style="color:var(--ink)">${esc(email)}</b>.<br>Escribe el código o abre el enlace <b style="color:var(--ink)">en este mismo dispositivo</b>.</p>
       </div>
+      <form id="f-codigo" data-email="${esc(email)}" autocomplete="off">
+        <label class="campo"><span>Código del correo</span><input name="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" class="input-codigo"></label>
+        <button class="btn full" type="submit">Entrar con el código</button>
+      </form>
+      <p class="sub" style="font-size:13px;text-align:center;margin:14px 0">¿No llega? Mira en spam o espera un minuto.</p>
       ${formPegarEnlace()}
       <button class="btn sec full" data-a="login">Usar otro correo</button>`);
   }
@@ -1167,6 +1176,14 @@
       }
       btn.disabled = false; f.nombre.focus();
     }
+    if (f.id === "f-codigo") {
+      const codigo = f.codigo.value.replace(/\D/g, "");
+      if (codigo.length < 6) return toast("El código tiene 6 números", true);
+      btn.disabled = true; btn.textContent = "Comprobando…";
+      try { await api.entrarConCodigo(f.dataset.email, codigo); }
+      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar con el código"; }
+      return;
+    }
     if (f.id === "f-clave") {
       const email = f.email.value.trim().toLowerCase();
       btn.disabled = true; btn.textContent = "Entrando…";
@@ -1248,7 +1265,7 @@
     S.admin = false;
     if (user) {
       try { S.admin = !!(await api.reclamarAdmin()); } catch { S.admin = false; }
-      if (hoja.open && $("#f-login, #login-enviado, #f-clave, #f-enlace")) cerrarHoja();
+      if (hoja.open && $("#f-login, #login-enviado, #f-clave, #f-enlace, #f-codigo")) cerrarHoja();
       if (/access_token|error_description/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }

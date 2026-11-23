@@ -660,3 +660,4 @@ body.es-admin .btn-admin-top { display: grid; }
 .pass { position: relative; }
 .pass input { padding-right: 48px; }
 .ver-pass { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; font-size: 18px; cursor: pointer; padding: 6px; opacity: .7; }
+.input-codigo { font-family: var(--serif); font-size: 34px; letter-spacing: .3em; text-align: center; padding: 10px; }
