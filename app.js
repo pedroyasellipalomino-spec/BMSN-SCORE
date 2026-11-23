@@ -4,7 +4,7 @@
 
   const S = {
     personas: [], planes: [], encuestas: [], resultados: [], misVotos: {}, votosAdmin: [],
-    user: null, admin: false, orden: { campo: "asistencias", asc: false }, emailLogin: "",
+    user: null, admin: false, orden: { campo: "asistencias", asc: false },
   };
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -93,7 +93,7 @@
 
   function abrirLogin() {
     $("#form-email").hidden = false;
-    $("#form-codigo").hidden = true;
+    $("#enviado").hidden = true;
     $("#err-login").textContent = "";
     $("#dlg-login").showModal();
     $("#form-email [name=email]").focus();
@@ -318,21 +318,11 @@
       const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
       btn.disabled = false;
       if (error) { $("#err-login").textContent = error.message; return; }
-      S.emailLogin = email;
-      $("#txt-codigo").textContent = `Te enviamos un correo a ${email}. Escribe el código o pulsa el enlace del correo.`;
+      $("#txt-correo").textContent = email;
       $("#form-email").hidden = true;
-      $("#form-codigo").hidden = false;
-      $("#form-codigo [name=codigo]").focus();
+      $("#enviado").hidden = false;
     });
-    $("#form-codigo").addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const token = ev.target.codigo.value.trim();
-      const { error } = await sb.auth.verifyOtp({ email: S.emailLogin, token, type: "email" });
-      if (error) { $("#err-login").textContent = "Código incorrecto o vencido."; return; }
-      ev.target.reset();
-      $("#dlg-login").close();
-    });
-    $("#otro-correo").addEventListener("click", () => { $("#form-email").hidden = false; $("#form-codigo").hidden = true; });
+    $("#otro-correo").addEventListener("click", () => { $("#form-email").hidden = false; $("#enviado").hidden = true; });
 
     // Planes
     $("#form-plan").addEventListener("submit", async (ev) => {

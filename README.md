@@ -11,7 +11,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Permisos
 
 - **Admin** (solo tú): la primera cuenta que entra en la página queda como admin. Puede anotar planes, personas y encuestas, y ver quién votó qué.
-- **Cualquiera con correo**: entra con un código que llega a su correo y vota. Un voto por correo y encuesta (si vuelve a votar, cambia su voto). Solo se vota durante el mes de la encuesta (zona horaria `America/Lima`, se cambia en `esquema.sql` y en `app.js`).
+- **Cualquiera con correo**: entra con un enlace que llega a su correo y vota. Un voto por correo y encuesta (si vuelve a votar, cambia su voto). Solo se vota durante el mes de la encuesta (zona horaria `America/Lima`, se cambia en `esquema.sql` y en `app.js`).
 - **Público**: ve los promedios y los resultados de las encuestas (solo conteos, nunca los correos).
 
 ## Promedios
