@@ -686,8 +686,9 @@ body.es-admin .btn-admin-top { display: grid; }
 .codigo-cajas span:not(:empty) { border-color: var(--borde-2); }
 
 /* ---------- Miembros (no admin): sin controles de gestión ---------- */
-body.miembro .solo-gestion, body.miembro .fab { display: none !important; }
-body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
+body.miembro .solo-gestion { display: none !important; }
+body.miembro.sin-perfil .fab { display: none !important; }
+body.miembro.sin-perfil .nav { grid-template-columns: repeat(4, 1fr); }
 
 /* ---------- Nominados y ganador del mes ---------- */
 .encuesta.nominacion { border-color: rgb(var(--neon-rgb) / .35); }
@@ -786,3 +787,20 @@ body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
 .opc-datos { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 3px; letter-spacing: .02em; }
 .opc.mia .opc-datos { color: var(--ink-2); }
 @media (max-width: 430px) { .logo-txt { display: none; } }
+
+/* ---------- Importados y solicitudes ---------- */
+.tag-importado { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; background: var(--soft); color: var(--muted); vertical-align: 2px; margin-left: 4px; }
+.aviso-importado { font-size: 13px; }
+.fila.solicitud { cursor: default; align-items: center; }
+.sol-acc { display: flex; gap: 6px; flex: none; }
+.sol-acc .btn.chico { padding: 8px 12px; }
+[data-pend] { position: relative; }
+[data-pend]::after {
+  content: attr(data-pend); position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--accent); color: var(--on-accent); font: 700 11px/18px var(--sans); text-align: center;
+}
+.nav-admin[data-pend]::after { top: 6px; right: auto; left: 34px; }
+.fila.solicitud .nom, .fila.solicitud .det { white-space: normal; overflow: visible; }
+.fila.solicitud { align-items: flex-start; }
+.fila.solicitud .sol-acc { flex-direction: column; }
+@media (min-width: 700px) { .fila.solicitud .sol-acc { flex-direction: row; } .fila.solicitud { align-items: center; } }

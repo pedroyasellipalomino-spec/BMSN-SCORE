@@ -104,7 +104,7 @@
         const opcional = (p) => p.then((r) => r.data || []);
         const [personas, planes, asist, encuestas, resultados, participacion, admins, claveGrupo, votantes, nominados] = await Promise.all([
           q(personasQ),
-          q(sb.from("planes").select("id,fecha,titulo,anfitrion,notas").order("fecha", { ascending: false }).order("creado", { ascending: false })),
+          q(sb.from("planes").select("*").order("fecha", { ascending: false }).order("creado", { ascending: false })),
           q(sb.from("asistencias").select("plan_id,persona_id")),
           q(sb.from("encuestas").select("*").order("mes", { ascending: false }).order("creado", { ascending: false })),
           q(sb.rpc("resultados")),
@@ -115,8 +115,9 @@
           sb.from("encuestas").select("tipo").limit(1).then((r) => !r.error),
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
+        const solicitudes = S.user ? await opcional(sb.from("solicitudes").select("*").order("creado", { ascending: false }).limit(200)) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -142,6 +143,9 @@
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
       ponerTema: (tema) => q(sb.rpc("poner_tema", { p_tema: tema })),
+      pedirAsistencia: (plan) => q(sb.rpc("pedir_asistencia", { p_plan: plan })),
+      proponerPlan: (p) => q(sb.rpc("proponer_plan", { p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
+      resolverSolicitud: (id, ok) => q(sb.rpc("resolver_solicitud", { p_id: id, p_aprobar: ok })),
       hacerCopia: () => q(sb.rpc("hacer_copia")),
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
@@ -169,7 +173,7 @@
       f = sumarDias(f, -(3 + (i * 7) % 9));
       const id = uid();
       const van = personas.filter((p, j) => (i + j * 3) % 5 !== 0 && (j + i) % 7 !== 3);
-      planes.push({ id, fecha: f, titulo: titulos[i % titulos.length], anfitrion: i % 4 === 3 ? null : van[(i * 5) % van.length].id, notas: "" });
+      planes.push({ id, fecha: f, titulo: titulos[i % titulos.length], anfitrion: i % 4 === 3 ? null : van[(i * 5) % van.length].id, notas: "", importado: i > 6 });
       van.forEach((p) => asist.push({ plan_id: id, persona_id: p.id }));
     }
     const m = mesActual(), ant = sumarDias(m + "-01", -1).slice(0, 7);
@@ -185,6 +189,7 @@
     const mio = {};
     let user = null, listener = () => {};
     const emailsAdmin = [];
+    const solicitudes = [];
     const copias = [{ id: 1, creada: sumarDias(hoy(), -3) + "T08:15:00Z", planes: 26, personas: 8, votos: 21 }];
     const pausa = () => new Promise((r) => setTimeout(r, 120));
     return {
@@ -199,7 +204,7 @@
           votantes: Object.entries(votos).map(([e, o]) => ({ encuesta_id: e, n: Math.max(0, ...Object.values(o)) + (mio[e] ? 1 : 0) })), nominados: true,
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
@@ -240,6 +245,14 @@
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
       async automatizar() { return "nada"; },
+      async pedirAsistencia(plan) { solicitudes.unshift({ id: uid(), tipo: "asistencia", persona_id: personas.find((p) => p.user_id === user?.id)?.id, plan_id: plan, estado: "pendiente", creado: new Date().toISOString(), datos: {} }); },
+      async proponerPlan(pp) { solicitudes.unshift({ id: uid(), tipo: "plan", persona_id: personas.find((p) => p.user_id === user?.id)?.id, estado: "pendiente", creado: new Date().toISOString(), datos: pp }); },
+      async resolverSolicitud(id, ok) {
+        const so = solicitudes.find((x) => x.id === id); so.estado = ok ? "aprobada" : "rechazada";
+        if (!ok) return;
+        if (so.tipo === "asistencia") asist.push({ plan_id: so.plan_id, persona_id: so.persona_id });
+        else await this.guardarPlan({ ...so.datos, id: null });
+      },
       async hacerCopia() { copias.unshift({ id: copias.length + 1, creada: new Date().toISOString(), planes: planes.length, personas: personas.length, votos: 0 }); },
       async listarCopias() { return copias; },
       async descargarCopia() { return { version: 1, fecha: new Date().toISOString(), personas, planes, asistencias: asist, encuestas }; },
@@ -278,6 +291,7 @@
       S.migracion = d.migracion !== false;
       S.fotos = d.fotos !== false;
       S.emailsAdmin = d.emailsAdmin || [];
+      S.solicitudes = d.solicitudes || [];
       S.conDesde = d.conDesde !== false;
       S.conTema = !!d.conTema;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
@@ -352,8 +366,11 @@
     const inst = v === "inicio" ? bannerInstalar() : "";
     $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
+    const nPend = S.admin ? (S.solicitudes || []).filter((x) => x.estado === "pendiente").length : 0;
+    $$(".btn-admin-top, .nav-admin").forEach((el) => (nPend ? el.setAttribute("data-pend", nPend) : el.removeAttribute("data-pend")));
     if (v === "admin") pintarCopias();
     document.body.classList.toggle("miembro", !!S.user && !S.admin);
+    document.body.classList.toggle("sin-perfil", !!S.user && !S.admin && !S.yo);
   }
 
   const bannerError = (m) => `<div class="banner error">${m}</div>`;
@@ -361,7 +378,7 @@
   function bannerSesion(texto) {
     if (S.admin) return "";
     if (!S.user) return `<div class="banner"><span>${texto}</span><button class="btn chico" data-a="login">Entrar</button></div>`;
-    return `<div class="banner"><span>Puedes votar y editar tu perfil. Los planes los anota el admin.</span></div>`;
+    return `<div class="banner"><span>Puedes votar, editar tu perfil y proponer planes con ＋. El admin los aprueba.</span></div>`;
   }
 
   function renderCuenta() {
@@ -523,12 +540,13 @@
         ${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<span class="cal-sem">${d}</span>`).join("")}
         ${celdas.join("")}
       </div>
+      ${delMes.some((p) => p.importado) ? `<p class="ayuda" style="margin:12px 0 0">≈ Este mes se importó de tu lista: los totales son exactos, pero qué día fue cada uno es aproximado.</p>` : ""}
       <div class="leyenda">${quien ? `<span><i class="lg fue"></i>Fue</span><span><i class="lg casa"></i>Puso casa</span><span><i class="lg falto"></i>No fue</span>` : `<span><i class="lg plan"></i>Hubo plan</span>`}<span><i class="lg hoy"></i>Hoy</span></div>
       </div>
       <div class="cal-col cal-detalle">
         ${dia ? `<div class="mes-cab" style="margin-top:0"><span>${diaSemana(dia)} ${+dia.slice(8)} de ${MESES[+dia.slice(5, 7) - 1]}</span><span>${planesDia.length || ""}</span></div>
           ${planesDia.length ? planesDia.map((p) => tarjetaPlan(p, pid)).join("") : `<div class="vacio" style="padding:24px 0"><p>No hubo plan este día.</p></div>`}
-          ${S.admin ? `<button class="btn ${planesDia.length ? "sec" : ""} full" data-a="nuevo-plan-dia" data-v="${dia}">＋ Anotar plan este día</button>` : ""}`
+          ${S.admin || S.yo ? `<button class="btn ${planesDia.length ? "sec" : ""} full" data-a="nuevo-plan-dia" data-v="${dia}">＋ ${S.admin ? "Anotar" : "Proponer"} plan este día</button>` : ""}`
         : `<div class="vacio cal-pista"><p>Toca un día para ver sus planes.</p></div>`}
       </div></div>`;
   }
@@ -540,7 +558,7 @@
     return `<button class="plan" data-a="ver-plan" data-id="${p.id}">
       <span class="fecha-bloque"><b>${+p.fecha.slice(8)}</b><span>${diaSemana(p.fecha)}</span></span>
       <span class="cuerpo">
-        <div class="tit">${esc(p.titulo)}</div>
+        <div class="tit">${esc(p.titulo)}${p.importado ? ' <span class="tag-importado" title="Asistentes aproximados">≈</span>' : ""}</div>
         <div class="casa">${anf ? `en casa de <em>${esc(anf.nombre)}</em>` : "fuera de casa"} · ${gente.length} personas</div>
         <div class="pila">${gente.slice(0, 6).map((g) => avatar(g, "sm")).join("")}${gente.length > 6 ? `<span class="av sm mas">+${gente.length - 6}</span>` : ""}</div>
         ${estado}
@@ -553,7 +571,10 @@
     const conCuenta = S.personas.filter((p) => p.user_id);
     const sinCuenta = S.personas.filter((p) => !p.user_id);
     const yoEmail = S.user?.email?.toLowerCase();
+    const pendientes = (S.solicitudes || []).filter((x) => x.estado === "pendiente");
     return `<div class="titulo-vista"><h1 class="h2">Panel de admin</h1><span class="insignia">Admin</span></div>
+      ${pendientes.length ? `<div class="seccion" style="margin-top:0"><div class="cab"><span class="eyebrow">Solicitudes pendientes · ${pendientes.length}</span></div>
+        <div class="lista">${pendientes.map(filaSolicitud).join("")}</div></div>` : ""}
       ${!S.migracion ? bannerError("Falta ejecutar <b>supabase/02_perfiles.sql</b> en Supabase.") : !S.fotos ? `<div class="banner"><span>Para activar las fotos de perfil ejecuta <b>supabase/03_fotos_admin.sql</b> en Supabase.</span></div>` : ""}
       <div class="stats admin-stats">
         <div class="stat"><b>${S.personas.length}</b><span>personas</span></div>
@@ -603,6 +624,37 @@
         </div>
         </div>
       </div>`;
+  }
+
+  function textoSolicitud(x) {
+    const quien = persona(x.persona_id)?.nombre || "Alguien";
+    if (x.tipo === "asistencia") {
+      const pl = S.planes.find((p) => p.id === x.plan_id);
+      return { quien, titulo: `Dice que fue a <b>${esc(pl?.titulo || "un plan")}</b>`, det: pl ? `${diaSemana(pl.fecha)} ${fechaCorta(pl.fecha)}` : "" };
+    }
+    const dd = x.datos || {};
+    const anf = persona(dd.anfitrion);
+    return { quien, titulo: `Propone <b>${esc(dd.titulo || "un plan")}</b>`,
+      det: `${dd.fecha ? `${diaSemana(dd.fecha)} ${fechaCorta(dd.fecha)} · ` : ""}${anf ? `en casa de ${esc(anf.nombre)}` : "fuera de casa"} · ${(dd.asistentes || []).length} personas` };
+  }
+  function filaSolicitud(x) {
+    const t = textoSolicitud(x);
+    return `<div class="fila solicitud">${avatar(persona(x.persona_id))}
+      <span class="cuerpo"><div class="nom" style="text-transform:none">${esc(t.quien)} · <span style="font-weight:500">${t.titulo}</span></div><div class="det">${t.det}</div></span>
+      <span class="sol-acc">${x.tipo === "plan" ? `<button class="btn sec chico" data-a="sol-ver" data-id="${x.id}">Ver</button>` : ""}
+        <button class="btn chico" data-a="sol-ok" data-id="${x.id}" aria-label="Aprobar">✓</button>
+        <button class="btn peligro chico" data-a="sol-no" data-id="${x.id}" aria-label="Rechazar">✕</button></span></div>`;
+  }
+  function hojaSolicitud(id) {
+    const x = (S.solicitudes || []).find((s) => s.id === id);
+    if (!x) return;
+    const dd = x.datos || {}, t = textoSolicitud(x);
+    const gente = (dd.asistentes || []).map(persona).filter(Boolean);
+    abrirHoja(`${cabHoja(esc(dd.titulo || "Propuesta"), `Propuesta de ${esc(t.quien)}`)}
+      <p class="sub" style="margin:-8px 0 16px">${t.det}</p>
+      ${dd.notas ? `<p style="margin:0 0 16px">${esc(dd.notas)}</p>` : ""}
+      <div class="lista">${gente.map((g) => `<div class="fila">${avatar(g)}<span class="cuerpo"><div class="nom">${esc(g.nombre)}</div></span>${g.id === dd.anfitrion ? "<span>🏠</span>" : ""}</div>`).join("")}</div>
+      <div class="acciones-pie"><button class="btn" data-a="sol-ok" data-id="${x.id}">✓ Aprobar</button><button class="btn peligro" data-a="sol-no" data-id="${x.id}">Rechazar</button></div>`);
   }
 
   async function pintarCopias() {
@@ -1039,7 +1091,9 @@
     const ayer = sumarDias(hoy(), -1);
     const esOtra = b.fecha !== hoy() && b.fecha !== ayer;
     const n = b.asistentes.size;
-    abrirHoja(`${cabHoja(b.id ? "Editar plan" : "Nuevo plan")}
+    const propuesta = !S.admin;
+    abrirHoja(`${cabHoja(b.id ? "Editar plan" : propuesta ? "Proponer plan" : "Nuevo plan")}
+      ${propuesta ? `<p class="sub" style="margin:-8px 0 16px">El admin lo revisará y, si lo aprueba, entra al calendario y a las estadísticas.</p>` : ""}
       <form id="f-plan" autocomplete="off">
         <input class="input-grande" name="titulo" maxlength="80" placeholder="¿Qué hicieron?" value="${esc(b.titulo)}">
         ${b.titulos.length && !b.id ? `<div class="chips" style="margin:12px 0 4px">${b.titulos.map((t) => `<button type="button" class="chip ${b.titulo === t ? "on" : ""}" data-a="tit-sug" data-v="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
@@ -1060,7 +1114,7 @@
           return `<button type="button" class="persona-sel ${on ? "on" : ""} ${casa ? "casa" : ""}" data-a="sel" data-id="${p.id}">
             ${avatar(p)}<i class="marca">${casa ? "🏠" : "✓"}</i><span>${esc(p.nombre)}</span></button>`;
         }).join("")}
-          <button type="button" class="persona-sel" data-a="nueva-persona-rapida"><span class="av" style="background:var(--soft);color:var(--ink-2)">＋</span><span>Añadir</span></button>
+          ${propuesta ? "" : `<button type="button" class="persona-sel" data-a="nueva-persona-rapida"><span class="av" style="background:var(--soft);color:var(--ink-2)">＋</span><span>Añadir</span></button>`}
         </div>
         <div class="campo" style="margin-top:22px"><span>¿Dónde fue?</span>
           <div class="chips">
@@ -1069,7 +1123,7 @@
           </div>
         </div>
         <label class="campo"><span>Nota (opcional)</span><input name="notas" maxlength="200" value="${esc(b.notas)}" placeholder="Algo para recordar"></label>
-        <div class="pie-hoja"><button class="btn full" type="submit" ${n ? "" : "disabled"}>${n ? `Guardar · ${n} persona${n === 1 ? "" : "s"}` : "Marca quién fue"}</button></div>
+        <div class="pie-hoja"><button class="btn full" type="submit" ${n ? "" : "disabled"}>${n ? `${propuesta ? "Enviar propuesta" : "Guardar"} · ${n} persona${n === 1 ? "" : "s"}` : "Marca quién fue"}</button></div>
       </form>`);
   }
 
@@ -1080,9 +1134,20 @@
     const [y, m, d] = p.fecha.split("-");
     abrirHoja(`${cabHoja(esc(p.titulo), `${diaSemana(p.fecha)} ${+d} de ${MESES[+m - 1]} ${y}`)}
       <p class="sub" style="margin:-8px 0 18px">${anf ? `En casa de <b style="color:var(--accent)">${esc(anf.nombre)}</b>` : "Fuera de casa"} · ${gente.length} personas</p>
+      ${p.importado ? `<div class="banner aviso-importado"><span>≈ Plan importado: los totales de cada persona son exactos, pero quién fue a este plan en concreto es <b>aproximado</b>.</span></div>` : ""}
       ${p.notas ? `<p style="margin:0 0 18px">${esc(p.notas)}</p>` : ""}
       <div class="lista">${gente.map((g) => `<button class="fila" data-a="perfil" data-id="${g.id}">${avatar(g)}<span class="cuerpo"><div class="nom">${esc(g.nombre)}</div></span>${g.id === p.anfitrion ? "<span>🏠</span>" : ""}</button>`).join("")}</div>
+      ${botonYoFui(p)}
       ${S.admin ? `<div class="acciones-pie"><button class="btn sec" data-a="editar-plan" data-id="${p.id}">Editar</button><button class="btn peligro" data-a="borrar-plan" data-id="${p.id}">Borrar</button></div>` : ""}`);
+  }
+
+  function botonYoFui(p) {
+    if (!S.yo || p.asistentes.includes(S.yo.id) || p.fecha > hoy()) return "";
+    if (S.admin) return `<button class="btn sec full" style="margin-top:14px" data-a="admin-me-apunto" data-id="${p.id}">✓ Apuntarme a este plan</button>`;
+    const pend = (S.solicitudes || []).find((x) => x.tipo === "asistencia" && x.plan_id === p.id && x.persona_id === S.yo.id && x.estado === "pendiente");
+    if (pend) return `<div class="banner" style="margin-top:14px"><span>⏳ Pediste que te apunten. El admin lo revisará.</span></div>`;
+    return `<button class="btn full" style="margin-top:14px" data-a="yo-fui" data-id="${p.id}">🙋 Yo fui</button>
+      <p class="ayuda" style="text-align:center;margin-top:8px">El admin confirmará tu asistencia.</p>`;
   }
 
 
@@ -1135,6 +1200,14 @@
     catch (e) { toast(msgError(e), true); return false; }
   }
 
+  // Admin anota directamente; un miembro con perfil propone; el resto, a entrar
+  function puedeAnotar() {
+    if (S.admin || S.yo) return true;
+    if (!S.user) hojaLogin("Entra con tu correo para anotar o proponer planes.");
+    else hojaQuienSoy();
+    return false;
+  }
+
   function exigirAdmin(motivo) {
     if (S.admin) return true;
     if (!S.user) hojaLogin(motivo);
@@ -1177,7 +1250,7 @@
     perfil: (d) => hojaPerfil(d.id),
     "ver-plan": (d) => hojaVerPlan(S.planes.find((p) => p.id === d.id)),
     "nuevo-plan": () => {
-      if (!exigirAdmin("Entra con tu correo de admin para anotar planes.")) return;
+      if (!puedeAnotar()) return;
       nuevoBorrador();
       if (!S.personas.length) { toast("Primero añade a la gente"); return hojaNuevaPersona(true); }
       hojaPlan();
@@ -1232,10 +1305,18 @@
       if (S.calDia && innerWidth < 1024) setTimeout(() => $(".cal-detalle")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
     },
     "nuevo-plan-dia": (d) => {
-      if (!exigirAdmin("Entra con tu correo de admin para anotar planes.")) return;
+      if (!puedeAnotar()) return;
       nuevoBorrador(null, d.v); hojaPlan();
     },
     "ir-admin": () => { cerrarHoja(); location.hash = "#admin"; },
+    "yo-fui": async (d) => { if (await hacer(() => api.pedirAsistencia(d.id), "Enviado: el admin lo revisará")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
+    "admin-me-apunto": async (d) => {
+      const p = S.planes.find((x) => x.id === d.id);
+      if (await hacer(() => api.guardarPlan({ ...p, asistentes: [...p.asistentes, S.yo.id] }), "Apuntado ✓")) hojaVerPlan(S.planes.find((x) => x.id === d.id));
+    },
+    "sol-ok": async (d) => { cerrarHoja(); await hacer(() => api.resolverSolicitud(d.id, true), "Aprobada ✓"); },
+    "sol-no": async (d) => { if (confirm("¿Rechazar esta solicitud?")) await hacer(() => api.resolverSolicitud(d.id, false), "Rechazada"); },
+    "sol-ver": (d) => hojaSolicitud(d.id),
     csv: () => descargarCSV(),
     "hacer-copia": async () => { if (await hacer(() => api.hacerCopia(), "Copia guardada")) pintarCopias(); },
     "descargar-copia": async (d) => {
@@ -1382,7 +1463,10 @@
       const b = borrador;
       if (!b.titulo.trim()) { toast("Ponle un nombre al plan", true); f.titulo.focus(); return; }
       btn.disabled = true; btn.textContent = "Guardando…";
-      const ok = await hacer(() => api.guardarPlan({ id: b.id, fecha: b.fecha, titulo: b.titulo.trim(), anfitrion: b.anfitrion, asistentes: [...b.asistentes], notas: b.notas.trim() }), b.id ? "Plan actualizado" : "Plan anotado ✓");
+      const datosPlan = { id: b.id, fecha: b.fecha, titulo: b.titulo.trim(), anfitrion: b.anfitrion, asistentes: [...b.asistentes], notas: b.notas.trim() };
+      const ok = S.admin
+        ? await hacer(() => api.guardarPlan(datosPlan), b.id ? "Plan actualizado" : "Plan anotado ✓")
+        : await hacer(() => api.proponerPlan(datosPlan), "Propuesta enviada al admin ✓");
       if (ok) { borrador = null; cerrarHoja(); }
       else { btn.disabled = false; btn.textContent = "Guardar"; }
     }
