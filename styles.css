@@ -753,7 +753,7 @@ body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
   --peligro: #d63a2a; --sombra: rgb(0 0 0 / .12);
   --fondo-img: radial-gradient(1000px 500px at 90% -10%, rgb(255 77 46 / .08), transparent 60%);
 }
-:root[data-tema="dia"] .av { background: hsl(var(--h) 55% 90%); color: hsl(var(--h) 45% 32%); }
+:root[data-tema="dia"] .av { background-color: hsl(var(--h) 55% 90%); color: hsl(var(--h) 45% 32%); }
 :root[data-tema="dia"] .av.foto { background-color: var(--soft); }
 :root[data-tema="dia"] .top { background: color-mix(in srgb, var(--bg) 90%, transparent); }
 :root[data-tema="dia"] .nav { background: color-mix(in srgb, #ffffff 94%, transparent); }
@@ -780,3 +780,6 @@ body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
 .tema-op.on .ok { display: grid; }
 .btn-tema { display: grid; width: 38px; height: 38px; border-radius: 50%; place-items: center; background: var(--soft); border: 1px solid var(--line); cursor: pointer; font-size: 17px; }
 .tema-op .info, .tema-op .tema-muestra { display: block; } .tema-op .tema-muestra { display: flex; }
+
+/* Fotos de perfil: siempre recortadas al círculo, en cualquier tema */
+.av.foto { background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }
