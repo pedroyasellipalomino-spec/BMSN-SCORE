@@ -433,7 +433,10 @@
     const resto = top.length === 3 ? rk.slice(3) : rk;
     const g = ganadores()[0];
     const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
-    return cartel + `<div class="inicio-grid"><div class="col-a">
+    const anioW = hoy().slice(0, 4);
+    const nW = S.planes.filter((x) => x.fecha.startsWith(anioW)).length;
+    const tarjetaW = nW >= 5 ? `<button class="wrapped-tarjeta" data-a="wrapped" data-v="${anioW}"><span class="wt-ic">🎁</span><span><span class="eyebrow">Ya disponible</span><b>BMSN Wrapped ${anioW}</b><span class="sub">Tu año en planes, en 1 minuto</span></span><span class="wt-flecha">→</span></button>` : "";
+    return cartel + tarjetaW + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
         <div><div class="display">${planes.length}</div><div class="sub">plan${planes.length === 1 ? "" : "es"} ${etiqueta}</div></div>
@@ -679,6 +682,96 @@
     const blob = new Blob([contenido], { type: tipo });
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: nombre });
     document.body.append(a); a.click(); a.remove();
+  }
+
+
+  // ---------- BMSN Wrapped ----------
+  function datosWrapped(anio) {
+    const planes = S.planes.filter((p) => p.fecha.startsWith(anio)).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const st = stats(planes).filter((r) => r.asistencias > 0);
+    const porMes = {};
+    planes.forEach((p) => (porMes[p.fecha.slice(5, 7)] = (porMes[p.fecha.slice(5, 7)] || 0) + 1));
+    const mesTop = Object.entries(porMes).sort((a, b) => b[1] - a[1])[0];
+    const fieles = [...st].sort((a, b) => b.asistencias - a.asistencias || (b.pctAsistencia || 0) - (a.pctAsistencia || 0)).slice(0, 3);
+    const anfitriones = [...st].filter((r) => r.casas).sort((a, b) => b.casas - a.casas).slice(0, 3);
+    const rachas = S.personas.map((pe) => {
+      let r = 0, m = 0;
+      for (const x of planes) { if (!esMiembroEn(pe, x.fecha) && !x.asistentes.includes(pe.id)) continue; r = x.asistentes.includes(pe.id) ? r + 1 : 0; m = Math.max(m, r); }
+      return { p: pe, n: m };
+    }).sort((a, b) => b.n - a.n);
+    const masGente = [...planes].sort((a, b) => b.asistentes.length - a.asistentes.length)[0];
+    const jugadores = ganadores().filter((g) => g.mes.startsWith(anio)).sort((a, b) => a.mes.localeCompare(b.mes));
+    let yo = null;
+    if (S.yo) {
+      const r = stats(planes).find((x) => x.p.id === S.yo.id);
+      const ranking = [...st].sort((a, b) => b.asistencias - a.asistencias);
+      const juntos = {};
+      planes.filter((x) => x.asistentes.includes(S.yo.id)).forEach((x) => x.asistentes.forEach((o) => { if (o !== S.yo.id) juntos[o] = (juntos[o] || 0) + 1; }));
+      const comp = Object.entries(juntos).sort((a, b) => b[1] - a[1])[0];
+      yo = { r, puesto: ranking.findIndex((x) => x.p.id === S.yo.id) + 1, de: ranking.length,
+             racha: rachas.find((x) => x.p.id === S.yo.id)?.n || 0, compa: comp ? { p: persona(comp[0]), n: comp[1] } : null,
+             logros: logros(S.yo).filter((l) => l.ok).length };
+    }
+    return { anio, planes, mesTop, fieles, anfitriones, racha: rachas[0], masGente, jugadores, yo, meses: Object.keys(porMes).length };
+  }
+
+  function pantallasWrapped(d) {
+    const nm = (m) => MESES[+m - 1];
+    const podio = (lista, valor) => `<div class="w-podio">${lista.map((r, i) => `<div class="w-pos p${i + 1}">${avatar(r.p, i ? "" : "xl")}<b>${esc(r.p.nombre)}</b><span>${valor(r)}</span></div>`).join("")}</div>`;
+    const P = [];
+    const nota = d.planes.some((x) => x.importado) ? `<div class="w-nota">≈ Incluye meses importados: dato aproximado</div>` : "";
+    P.push(`<div class="w-pant w-portada"><img src="icons/logo.png" alt="" class="w-logo"><div class="w-eyebrow">Tu año en planes</div>
+      <div class="w-titulo">BMSN<br>Wrapped<br><span class="w-neon">${d.anio}</span></div><div class="w-pista">Toca para avanzar →</div></div>`);
+    P.push(`<div class="w-pant"><div class="w-eyebrow">En ${d.anio} hicimos</div><div class="w-numero">${d.planes.length}</div><div class="w-sub">planes en ${d.meses} meses</div>
+      ${d.mesTop ? `<div class="w-frase">El mes más movido fue <b>${nm(d.mesTop[0])}</b>, con <b>${d.mesTop[1]} planes</b>.</div>` : ""}</div>`);
+    if (d.fieles.length) P.push(`<div class="w-pant"><div class="w-eyebrow">Los que nunca fallan</div><div class="w-titulo chico">Los más fieles</div>
+      ${podio(d.fieles, (r) => `${r.asistencias} planes · ${pct(r.pctAsistencia)}`)}</div>`);
+    if (d.anfitriones.length) P.push(`<div class="w-pant w-acento"><div class="w-eyebrow">Gracias por abrir la puerta</div><div class="w-titulo chico">Anfitriones del año</div>
+      ${podio(d.anfitriones, (r) => `🏠 ${r.casas} ${r.casas === 1 ? "casa" : "casas"}`)}</div>`);
+    if (d.racha?.n) P.push(`<div class="w-pant"><div class="w-eyebrow">La racha más larga</div>${avatar(d.racha.p, "xl w-av")}<div class="w-numero">${d.racha.n}</div>
+      <div class="w-sub">planes seguidos sin fallar</div><div class="w-frase"><b>${esc(d.racha.p.nombre)}</b> no se perdió ni uno.</div>${nota}</div>`);
+    if (d.masGente) P.push(`<div class="w-pant w-acento"><div class="w-eyebrow">El plan del año</div><div class="w-titulo chico">${esc(d.masGente.titulo)}</div>
+      <div class="w-numero">${d.masGente.asistentes.length}</div><div class="w-sub">personas · ${diaSemana(d.masGente.fecha)} ${fechaCorta(d.masGente.fecha)}</div>
+      <div class="pila w-pila">${d.masGente.asistentes.map(persona).filter(Boolean).slice(0, 10).map((g) => avatar(g)).join("")}</div>${nota}</div>`);
+    if (d.jugadores.length) P.push(`<div class="w-pant"><div class="w-eyebrow">🏆 Jugadores del mes</div><div class="w-lista">${d.jugadores.map((g) =>
+      `<div class="w-fila"><span>${nm(g.mes.slice(5))}</span><b>${esc(g.nombres.join(" y "))}</b></div>`).join("")}</div></div>`);
+    if (d.yo?.r) P.push(`<div class="w-pant w-tuyo"><div class="w-eyebrow">Tu ${d.anio}</div>${avatar(S.yo, "xl w-av")}<div class="w-titulo chico">${esc(S.yo.nombre)}</div>
+      <div class="w-grid">
+        <div><b>${d.yo.r.asistencias}</b><span>planes</span></div>
+        <div><b>${pct(d.yo.r.pctAsistencia)}</b><span>asistencia</span></div>
+        <div><b>#${d.yo.puesto}</b><span>de ${d.yo.de} en el ranking</span></div>
+        <div><b>${d.yo.r.casas}</b><span>veces pusiste casa</span></div>
+        <div><b>${d.yo.racha}</b><span>tu mejor racha</span></div>
+        <div><b>${d.yo.logros}</b><span>logros</span></div>
+      </div>
+      ${d.yo.compa ? `<div class="w-frase">Tu compañero de planes: <b>${esc(d.yo.compa.p.nombre)}</b> (${d.yo.compa.n} planes juntos)</div>` : ""}${nota}</div>`);
+    P.push(`<div class="w-pant w-portada"><img src="icons/logo.png" alt="" class="w-logo"><div class="w-titulo">Nos vemos<br>en <span class="w-neon">${+d.anio + 1}</span></div>
+      <button class="btn" data-a="cerrar-wrapped" style="margin-top:28px">Cerrar</button></div>`);
+    return P;
+  }
+
+  let wrapped = null;
+  function abrirWrapped(anio = hoy().slice(0, 4)) {
+    const d = datosWrapped(anio);
+    if (!d.planes.length) return toast(`No hay planes en ${anio}`, true);
+    wrapped = { pantallas: pantallasWrapped(d), i: 0 };
+    let el = $("#wrapped");
+    if (!el) { el = document.createElement("div"); el.id = "wrapped"; document.body.append(el); }
+    document.body.classList.add("con-wrapped");
+    pintarWrapped();
+  }
+  function pintarWrapped() {
+    const el = $("#wrapped");
+    if (!el || !wrapped) return;
+    const { pantallas, i } = wrapped;
+    el.innerHTML = `<div class="w-barras">${pantallas.map((_, k) => `<i class="${k < i ? "hecha" : k === i ? "actual" : ""}"></i>`).join("")}</div>
+      <button class="w-cerrar" data-a="cerrar-wrapped" aria-label="Cerrar">${ICON.cerrar}</button>
+      <div class="w-zona izq" data-a="w-ant"></div><div class="w-zona der" data-a="w-sig"></div>
+      <div class="w-escena w-${i % 4}">${pantallas[i]}</div>`;
+  }
+  function cerrarWrapped() {
+    wrapped = null; $("#wrapped")?.remove(); document.body.classList.remove("con-wrapped");
+    if (location.hash === "#wrapped") history.replaceState(null, "", location.pathname + location.search + "#inicio");
   }
 
   function descargarCSV() {
@@ -1089,6 +1182,7 @@
         ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
       </div>
       ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
+      ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="wrapped">🎁 Ver mi BMSN Wrapped</button>` : ""}
       ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="temas">🎨 Cambiar tema</button>` : ""}
       ${propio && puedeInstalar() ? `<button class="btn linea full" style="margin-top:10px" data-a="instalar">📲 Instalar BMSN como app</button>` : ""}
       ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
@@ -1374,6 +1468,10 @@
       nuevoBorrador(null, d.v); hojaPlan();
     },
     "ir-admin": () => { cerrarHoja(); location.hash = "#admin"; },
+    wrapped: (d) => { cerrarHoja(); abrirWrapped(d.v || undefined); },
+    "cerrar-wrapped": () => cerrarWrapped(),
+    "w-sig": () => { if (wrapped.i < wrapped.pantallas.length - 1) { wrapped.i++; pintarWrapped(); } else cerrarWrapped(); },
+    "w-ant": () => { if (wrapped.i > 0) { wrapped.i--; pintarWrapped(); } },
     "yo-fui": async (d) => { if (await hacer(() => api.pedirAsistencia(d.id), "Enviado: el admin lo revisará")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
     "admin-me-apunto": async (d) => {
       const p = S.planes.find((x) => x.id === d.id);
@@ -1623,6 +1721,12 @@
 
   $("#btn-nuevo").addEventListener("click", () => acciones["nuevo-plan"]());
   document.addEventListener("keydown", (ev) => {
+    if (wrapped) {
+      if (ev.key === "ArrowRight" || ev.key === " ") { ev.preventDefault(); acciones["w-sig"](); }
+      if (ev.key === "ArrowLeft") acciones["w-ant"]();
+      if (ev.key === "Escape") cerrarWrapped();
+      return;
+    }
     if (ev.metaKey || ev.ctrlKey || ev.altKey || hoja.open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
     const k = ev.key.toLowerCase();
     if (k === "n") { ev.preventDefault(); acciones["nuevo-plan"](); }
@@ -1630,7 +1734,7 @@
     if (rutas[k]) location.hash = "#" + rutas[k];
   });
   $("#btn-cuenta").addEventListener("click", () => (S.user ? hojaCuenta() : hojaLogin()));
-  window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
+  window.addEventListener("hashchange", () => { if (location.hash === "#wrapped") { if (S.cargado) abrirWrapped(); return; } render(); window.scrollTo(0, 0); });
 
   // ---------- Arranque ----------
   if (!api) return render();
@@ -1652,6 +1756,7 @@
       automatizado = true;
       try { if ((await api.automatizar()) !== "nada") await cargar(); } catch {}
     }
+    if (location.hash === "#wrapped" && !wrapped) abrirWrapped();
     if (S.user && S.migracion && !S.yo && !S.errorCarga) hojaQuienSoy();
     else if (new URLSearchParams(location.search).get("accion") === "nuevo") {
       const q = new URLSearchParams(location.search); q.delete("accion");
