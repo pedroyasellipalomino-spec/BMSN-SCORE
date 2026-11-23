@@ -89,7 +89,12 @@
 
   function crearSupabase() {
     const cfg = window.BMSN_CONFIG || {};
-    if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) return null;
+    if (!cfg.supabaseUrl || !cfg.supabaseKey) return null;
+    if (!window.supabase) {
+      // Sin la librería (sin conexión la primera vez): modo lectura con lo último guardado
+      const sinRed = () => Promise.reject(new Error("Failed to fetch"));
+      return new Proxy({ alCambiarSesion: (fn) => setTimeout(() => fn(null), 0), automatizar: async () => "nada" }, { get: (o, k) => (k in o ? o[k] : sinRed) });
+    }
     const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
     const q = async (p) => { const { data, error } = await p; if (error) throw error; return data; };
     return {
@@ -278,7 +283,20 @@
 
   async function cargar() {
     try {
-      const d = await api.cargar();
+      let d;
+      try {
+        d = await api.cargar();
+        S.sinConexion = null;
+        if (!DEMO) guardar("bmsn-cache", JSON.stringify({ t: Date.now(), personas: d.personas, planes: d.planes, asist: d.asist, encuestas: d.encuestas,
+          resultados: d.resultados, votantes: d.votantes, participacion: d.participacion, admins: d.admins }));
+      } catch (e) {
+        // Sin conexión: se muestra lo último guardado en este aparato (solo datos públicos del grupo)
+        const cache = JSON.parse(leer("bmsn-cache") || "null");
+        if (!cache || navigator.onLine !== false && !/fetch|network|load failed/i.test(e?.message || "")) throw e;
+        d = { ...cache, votos: [], solicitudes: [], emailsAdmin: [], migracion: true, fotos: true, nominados: true, conDesde: true, conTema: true, claveGrupo: null };
+        S.sinConexion = cache.t;
+      }
+      S.ultimaCarga = Date.now();
       const porPlan = {};
       d.asist.forEach((a) => (porPlan[a.plan_id] ??= []).push(a.persona_id));
       S.personas = d.personas;
@@ -368,7 +386,8 @@
     const mig = !S.migracion && S.admin ? bannerError("Falta activar los perfiles: ejecuta <b>supabase/02_perfiles.sql</b> en Supabase.") : "";
     const sinPerfil = S.user && S.migracion && !S.yo && S.cargado ? `<div class="banner"><span>Tu correo aún no está unido a tu perfil.</span><button class="btn chico" data-a="quien-soy">¿Quién eres?</button></div>` : "";
     const inst = v === "inicio" ? bannerInstalar() || bannerAvisos() : "";
-    $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
+    const off = S.sinConexion ? `<div class="banner"><span>📡 Sin conexión: mostrando lo guardado el ${fechaCorta(new Date(S.sinConexion).toLocaleDateString("en-CA", { timeZone: TZ }))}. Se actualizará al volver la señal.</span></div>` : "";
+    $("#vista").innerHTML = off + demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
     const nPend = S.admin ? (S.solicitudes || []).filter((x) => x.estado === "pendiente").length : 0;
     $$(".btn-admin-top, .nav-admin").forEach((el) => (nPend ? el.setAttribute("data-pend", nPend) : el.removeAttribute("data-pend")));
@@ -1013,7 +1032,8 @@
     if (!S.personas.length) {
       return head + bannerSesion("Entra con tu correo para añadir gente.") + `<div class="vacio"><p>Aún no hay nadie.</p><button class="btn solo-gestion" data-a="nueva-persona">Añadir personas</button></div>`;
     }
-    return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${S.personas.map((p) => {
+    const orden = S.yo ? [S.yo, ...S.personas.filter((p) => p.id !== S.yo.id)] : S.personas;
+    return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${orden.map((p) => {
       const r = st[p.id];
       return `<button class="fila ${S.yo?.id === p.id ? "yo" : ""}" data-a="perfil" data-id="${p.id}">${avatar(p)}
         <span class="cuerpo"><div class="nom">${esc(p.nombre)}${insignias(p, true)}</div><div class="det">${p.bio ? esc(p.bio) : `${r.asistencias} planes · 🏠 ${r.casas}`} · 🏅 ${logros(p).filter((x) => x.ok).length}</div></span>
@@ -1922,6 +1942,10 @@
     if (rutas[k]) location.hash = "#" + rutas[k];
   });
   $("#btn-cuenta").addEventListener("click", () => (S.user ? hojaCuenta() : hojaLogin()));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && S.cargado && !hoja.open && !wrapped && Date.now() - (S.ultimaCarga || 0) > 60000) cargar();
+  });
+  window.addEventListener("online", () => { if (S.cargado) cargar(); });
   window.addEventListener("hashchange", () => { if (location.hash === "#wrapped") { if (S.cargado) abrirWrapped(); return; } render(); window.scrollTo(0, 0); });
 
   // ---------- Arranque ----------

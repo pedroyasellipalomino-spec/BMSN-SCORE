@@ -1,13 +1,18 @@
 /* BMSN — service worker: abre la app al instante y sin señal muestra lo último guardado.
    Nunca guarda nada de Supabase (datos y sesión siempre van directo a la red). */
-const VERSION = "bmsn-v26";
+const VERSION = "bmsn-v27";
 const BASE = [
-  "./", "./index.html", "./app.js?v=26", "./styles.css?v=26", "./config.js?v=26", "./manifest.webmanifest",
+  "./", "./index.html", "./app.js?v=27", "./styles.css?v=27", "./config.js?v=27", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-64.png", "./icons/logo.png",
 ];
 
+const LIBS = ["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"];
+
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(BASE)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(async (c) => {
+    await c.addAll(BASE);
+    await Promise.all(LIBS.map((u) => c.add(new Request(u, { mode: "cors" })).catch(() => {}))); // si falla, se guardará en la primera visita con red
+  }).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
