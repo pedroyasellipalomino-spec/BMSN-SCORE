@@ -19,7 +19,10 @@
   const dec = (x) => (isFinite(x) ? (Math.round(x * 10) / 10).toString().replace(".", ",") : "—");
   const iniciales = (n) => n.trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
   const tono = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
-  const avatar = (p, cls = "") => (p ? `<span class="av ${cls}" style="--h:${tono(p.nombre)}">${esc(iniciales(p.nombre))}</span>` : "");
+  const hue = (p) => (Number.isInteger(p.color) ? p.color : tono(p.nombre));
+  const avatar = (p, cls = "") => (p ? `<span class="av ${cls} ${p.emoji ? "emoji" : ""}" style="--h:${hue(p)}">${p.emoji ? esc(p.emoji) : esc(iniciales(p.nombre))}</span>` : "");
+  const EMOJIS = ["😎", "🔥", "🍻", "🍕", "🎮", "⚽", "🎸", "🎧", "🌮", "🍷", "🏀", "🎲", "🦁", "🐺", "🦊", "🐸", "👑", "💀", "🚀", "🌈", "⚡", "🍀", "🎯", "🃏"];
+  const COLORES = [80, 140, 180, 210, 260, 300, 340, 15, 40];
   const ICON = {
     cerrar: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     izq: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
@@ -61,21 +64,33 @@
     const q = async (p) => { const { data, error } = await p; if (error) throw error; return data; };
     return {
       async cargar() {
-        const [personas, planes, asist, encuestas, resultados] = await Promise.all([
-          q(sb.from("personas").select("id,nombre").order("nombre")),
+        let migracion = true;
+        const personasQ = sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado").order("nombre").then(async (r) => {
+          if (r.error?.code === "42703") { migracion = false; return sb.from("personas").select("id,nombre").order("nombre"); }
+          return r;
+        });
+        const opcional = (p) => p.then((r) => r.data || []);
+        const [personas, planes, asist, encuestas, resultados, participacion, admins] = await Promise.all([
+          q(personasQ),
           q(sb.from("planes").select("id,fecha,titulo,anfitrion,notas").order("fecha", { ascending: false }).order("creado", { ascending: false })),
           q(sb.from("asistencias").select("plan_id,persona_id")),
           q(sb.from("encuestas").select("id,mes,pregunta,opciones,creado").order("mes", { ascending: false }).order("creado", { ascending: false })),
           q(sb.rpc("resultados")),
+          opcional(sb.rpc("participacion")),
+          opcional(sb.rpc("personas_admin")),
         ]);
-        const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos };
+        const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
       borrarPlan: (id) => q(sb.from("planes").delete().eq("id", id)),
       crearPersona: (nombre) => q(sb.from("personas").insert({ nombre })),
-      renombrarPersona: (id, nombre) => q(sb.from("personas").update({ nombre }).eq("id", id)),
+      vincular: (id, nombre) => q(sb.rpc("vincular", { p_persona: id || null, p_nombre: nombre || "" })),
+      editarPerfil: (id, d, propio) => propio
+        ? q(sb.rpc("editar_perfil", { p_nombre: d.nombre, p_bio: d.bio, p_emoji: d.emoji, p_color: d.color }))
+        : q(sb.from("personas").update({ nombre: d.nombre, bio: d.bio, emoji: d.emoji, color: d.color }).eq("id", id)),
+      desvincular: (id) => q(sb.rpc("desvincular", { p_persona: id })),
       borrarPersona: (id) => q(sb.from("personas").delete().eq("id", id)),
       crearEncuesta: (e) => q(sb.from("encuestas").insert(e)),
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
@@ -88,7 +103,7 @@
 
   function crearDemo() {
     const uid = () => Math.random().toString(36).slice(2, 10);
-    const personas = ["Ana", "Luis", "Pedro", "Camila", "Diego", "Valeria", "Mateo", "Sofía"].map((n) => ({ id: uid(), nombre: n }));
+    const personas = ["Ana", "Luis", "Pedro", "Camila", "Diego", "Valeria", "Mateo", "Sofía"].map((n, i) => ({ id: uid(), nombre: n, user_id: i % 3 === 1 ? "otro" + i : null, bio: i === 1 ? "El que nunca falta al asado" : "", emoji: i === 4 ? "🔥" : "", color: null }));
     const titulos = ["Asado", "Noche de pelis", "Cumple", "Juegos de mesa", "Fútbol", "Karaoke", "Cena", "Playa"];
     const planes = [], asist = [];
     let f = hoy();
@@ -116,7 +131,10 @@
           planes: [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha)),
           asist: [...asist], encuestas: [...encuestas],
           resultados: Object.entries(votos).flatMap(([e, o]) => Object.entries(o).map(([opcion, n]) => ({ encuesta_id: e, opcion, votos: n }))),
-          votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o })) : [],
+          votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o.opcion, fecha: o.fecha })) : [],
+          participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
+          admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
+          migracion: true,
         };
       },
       reclamarAdmin: async () => true,
@@ -132,15 +150,23 @@
         if (personas.some((p) => p.nombre.toLowerCase() === nombre.toLowerCase())) throw new Error("duplicate key nombre");
         personas.push({ id: uid(), nombre });
       },
-      async renombrarPersona(id, nombre) { personas.find((p) => p.id === id).nombre = nombre; },
+      async vincular(id, nombre) {
+        if (personas.some((p) => p.user_id === user.id)) return;
+        let p = id ? personas.find((x) => x.id === id) : personas.find((x) => x.nombre.toLowerCase() === nombre.trim().toLowerCase());
+        if (p && p.user_id) throw new Error("Ese perfil ya pertenece a otra cuenta");
+        if (!p) { p = { id: uid(), nombre: nombre.trim() }; personas.push(p); }
+        Object.assign(p, { user_id: user.id, vinculado: new Date().toISOString() });
+      },
+      async editarPerfil(id, d) { Object.assign(personas.find((p) => p.id === id), d); },
+      async desvincular(id) { Object.assign(personas.find((p) => p.id === id), { user_id: null, vinculado: null }); },
       async borrarPersona(id) { personas.splice(personas.findIndex((x) => x.id === id), 1); },
       async crearEncuesta(e) { const id = uid(); encuestas.unshift({ id, ...e }); votos[id] = {}; },
       async borrarEncuesta(id) { encuestas.splice(encuestas.findIndex((x) => x.id === id), 1); },
       async votar(id, opcion) {
         votos[id] ??= {};
-        if (mio[id]) votos[id][mio[id]]--;
+        if (mio[id]) votos[id][mio[id].opcion]--;
         votos[id][opcion] = (votos[id][opcion] || 0) + 1;
-        mio[id] = opcion;
+        mio[id] = { opcion, fecha: new Date().toISOString() };
       },
       async entrar(email) { await pausa(); user = { id: "demo", email }; setTimeout(() => listener(user), 300); },
       async salir() { user = null; listener(null); },
@@ -158,7 +184,12 @@
       S.encuestas = d.encuestas;
       S.resultados = d.resultados;
       S.misVotos = {};
-      d.votos.filter((v) => v.user_id === S.user?.id).forEach((v) => (S.misVotos[v.encuesta_id] = v.opcion));
+      S.misVotosLista = d.votos.filter((v) => v.user_id === S.user?.id);
+      S.misVotosLista.forEach((v) => (S.misVotos[v.encuesta_id] = v.opcion));
+      S.participacion = Object.fromEntries((d.participacion || []).map((x) => [x.persona_id, Number(x.votos)]));
+      S.adminIds = new Set(d.admins || []);
+      S.migracion = d.migracion !== false;
+      S.yo = S.user ? S.personas.find((p) => p.user_id && p.user_id === S.user.id) || null : null;
       S.votosAdmin = S.admin ? d.votos : [];
       S.errorCarga = null;
     } catch (e) {
@@ -216,7 +247,9 @@
     if (!S.cargado) return;
     const err = S.errorCarga ? bannerError("No se pudieron cargar los datos: " + esc(S.errorCarga)) : "";
     const demo = DEMO ? `<div class="banner"><span>Modo demo: datos inventados, nada se guarda.</span></div>` : "";
-    $("#vista").innerHTML = demo + err + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente }[v]();
+    const mig = !S.migracion && S.admin ? bannerError("Falta activar los perfiles: ejecuta <b>supabase/02_perfiles.sql</b> en Supabase.") : "";
+    const sinPerfil = S.user && S.migracion && !S.yo && S.cargado ? `<div class="banner"><span>Tu correo aún no está unido a tu perfil.</span><button class="btn chico" data-a="quien-soy">¿Quién eres?</button></div>` : "";
+    $("#vista").innerHTML = demo + mig + err + sinPerfil + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente }[v]();
   }
 
   const bannerError = (m) => `<div class="banner error">${m}</div>`;
@@ -230,8 +263,8 @@
   function renderCuenta() {
     const b = $("#btn-cuenta");
     if (!S.user) { b.innerHTML = `<span class="txt">Entrar</span>`; return; }
-    const nombre = S.user.email.split("@")[0];
-    b.innerHTML = `${avatar({ nombre }, "sm")}<span class="txt">${S.admin ? "Admin" : esc(nombre)}</span>`;
+    const yo = S.yo || { nombre: S.user.email.split("@")[0] };
+    b.innerHTML = `${avatar(yo, "sm")}<span class="txt">${esc(yo.nombre)}</span>${S.admin ? '<span class="insignia mini">Admin</span>' : ""}`;
   }
 
   function selectorPeriodo() {
@@ -398,8 +431,8 @@
     }
     return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${S.personas.map((p) => {
       const r = st[p.id];
-      return `<button class="fila" data-a="perfil" data-id="${p.id}">${avatar(p)}
-        <span class="cuerpo"><div class="nom">${esc(p.nombre)}</div><div class="det">${r.asistencias} planes · 🏠 ${r.casas}</div></span>
+      return `<button class="fila ${S.yo?.id === p.id ? "yo" : ""}" data-a="perfil" data-id="${p.id}">${avatar(p)}
+        <span class="cuerpo"><div class="nom">${esc(p.nombre)}${insignias(p, true)}</div><div class="det">${p.bio ? esc(p.bio) : `${r.asistencias} planes · 🏠 ${r.casas}`}</div></span>
         <span class="der"><div class="big">${pct(r.pctAsistencia)}</div></span></button>`;
     }).join("")}</div>`;
   }
@@ -434,11 +467,112 @@
       <button class="btn sec full" data-a="login">Usar otro correo</button>`);
   }
   function hojaCuenta() {
-    abrirHoja(`${cabHoja(S.admin ? "Admin" : "Tu cuenta")}
+    if (S.yo) return hojaPerfil(S.yo.id);
+    abrirHoja(`${cabHoja("Tu cuenta")}
       <div class="perfil-cab">${avatar({ nombre: S.user.email }, "xl")}<div><div class="h3">${esc(S.user.email)}</div>
-      <div class="sub">${S.admin ? "Puedes anotar planes, gente y encuestas." : "Puedes votar en las encuestas."}</div></div></div>
+      <div class="sub">${S.admin ? "Admin de BMSN" : "Miembro"} · sin perfil todavía</div></div></div>
+      ${S.migracion ? `<button class="btn full" data-a="quien-soy">Elegir mi perfil</button><div style="height:10px"></div>` : ""}
       <button class="btn linea full" data-a="salir">Cerrar sesión</button>`);
   }
+
+  // "¿Quién eres?": une el correo a una persona de BMSN
+  function hojaQuienSoy() {
+    const libres = S.personas.filter((p) => !p.user_id);
+    abrirHoja(`${cabHoja("¿Quién eres?", "Bienvenido a BMSN")}
+      <p class="sub" style="margin:-6px 0 18px">Escribe tu nombre. Si ya estás en BMSN, tu correo se une a tu perfil con todas tus estadísticas.</p>
+      <form id="f-quien" autocomplete="off">
+        <input class="input-grande" name="nombre" maxlength="40" placeholder="Tu nombre" required>
+        <p class="ayuda" id="quien-pista" style="margin-top:10px">&nbsp;</p>
+        ${libres.length ? `<div class="campo"><span>O toca tu perfil</span><div class="gente-grid">${libres.map((p) => `
+          <button type="button" class="persona-sel" data-a="soy" data-id="${p.id}">${avatar(p)}<span>${esc(p.nombre)}</span></button>`).join("")}</div></div>` : ""}
+        <div class="pie-hoja"><button class="btn full" type="submit">Este soy yo</button></div>
+      </form>`);
+    setTimeout(() => $("#f-quien [name=nombre]")?.focus(), 250);
+  }
+
+  function insignias(p, compactas = false) {
+    const b = [];
+    if (S.adminIds?.has(p.id)) b.push('<span class="insignia">Admin</span>');
+    if (S.yo?.id === p.id) b.push('<span class="insignia tu">Tú</span>');
+    else if (p.user_id && !compactas) b.push('<span class="insignia gris">Cuenta verificada</span>');
+    return b.length ? ` ${b.join(" ")}` : "";
+  }
+
+  function actividad(p) {
+    const ev = [];
+    S.planes.forEach((x) => {
+      if (x.anfitrion === p.id) ev.push({ f: x.fecha, i: "🏠", t: `Puso casa: <b>${esc(x.titulo)}</b>`, a: "ver-plan", id: x.id });
+      else if (x.asistentes.includes(p.id)) ev.push({ f: x.fecha, i: "✓", t: `Fue a <b>${esc(x.titulo)}</b>`, a: "ver-plan", id: x.id });
+    });
+    if (S.yo?.id === p.id) {
+      (S.misVotosLista || []).forEach((v) => {
+        const e = S.encuestas.find((x) => x.id === v.encuesta_id);
+        if (e) ev.push({ f: (v.fecha || e.mes + "-01").slice(0, 10), i: "☑", t: `Votó <b>${esc(v.opcion)}</b> en «${esc(e.pregunta)}»`, a: "ver-encuesta", id: e.id });
+      });
+    }
+    if (p.vinculado) ev.push({ f: p.vinculado.slice(0, 10), i: "★", t: "Se unió a BMSN con su correo" });
+    return ev.sort((a, b) => b.f.localeCompare(a.f));
+  }
+
+  function hojaPerfil(id, todo = false) {
+    const p = persona(id);
+    if (!p) return;
+    const r = stats(S.planes).find((x) => x.p.id === id);
+    const votos = S.yo?.id === id ? (S.misVotosLista || []).length : S.participacion?.[id] || 0;
+    const propio = S.yo?.id === id;
+    const ev = actividad(p);
+    const lista = todo ? ev : ev.slice(0, 8);
+    abrirHoja(`<div class="hoja-cab"><span></span><button class="cerrar" data-a="cerrar" aria-label="Cerrar">${ICON.cerrar}</button></div>
+      <div class="perfil-cab" style="margin-top:-28px">${avatar(p, "xl")}<div style="min-width:0">
+        <div class="h2">${esc(p.nombre)}</div>
+        <div class="insignias">${insignias(p)}</div>
+        ${p.bio ? `<div class="bio">${esc(p.bio)}</div>` : propio ? `<div class="sub">Añade una frase en Editar perfil</div>` : ""}
+      </div></div>
+      <div class="stats">
+        <div class="stat"><b>${pct(r.pctAsistencia)}</b><span>asistencia · ${r.asistencias} de ${r.total}</span></div>
+        <div class="stat"><b>${r.casas}</b><span>puso casa · ${pct(r.pctCasa)}</span></div>
+        <div class="stat"><b>${r.racha}</b><span>racha actual</span></div>
+        <div class="stat"><b>${votos}</b><span>${votos === 1 ? "encuesta votada" : "encuestas votadas"}</span></div>
+      </div>
+      <div class="seccion" style="margin-top:24px"><div class="cab"><span class="eyebrow">Actividad</span><span class="sub">${dec(r.promMes)} planes/mes</span></div>
+        ${lista.length ? `<div class="timeline">${lista.map((x) => `<${x.a ? `button data-a="${x.a}" data-id="${x.id}"` : "div"} class="ev">
+          <span class="ic">${x.i}</span><span class="tx">${x.t}</span><span class="fe">${fechaCorta(x.f)}</span></${x.a ? "button" : "div"}>`).join("")}</div>
+          ${!todo && ev.length > lista.length ? `<button class="link" style="margin-top:12px" data-a="perfil-todo" data-id="${id}">Ver toda la actividad (${ev.length})</button>` : ""}`
+        : `<p class="sub">Todavía sin actividad.</p>`}
+      </div>
+      <div class="acciones-pie">
+        ${propio || S.admin ? `<button class="btn" data-a="editar-perfil" data-id="${id}">Editar perfil</button>` : ""}
+        ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
+      </div>
+      ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
+        ${p.user_id ? `<button class="btn sec" data-a="desvincular" data-id="${id}">Soltar cuenta</button>` : ""}
+        <button class="btn peligro" data-a="borrar-persona" data-id="${id}">Borrar</button></div>` : ""}`);
+  }
+
+  let edicion = null;
+  function hojaEditarPerfil(id) {
+    const p = persona(id);
+    edicion ??= { id, nombre: p.nombre, bio: p.bio || "", emoji: p.emoji || "", color: Number.isInteger(p.color) ? p.color : null };
+    const e = edicion;
+    const vista = { nombre: e.nombre || "?", emoji: e.emoji, color: e.color ?? tono(p.nombre) };
+    abrirHoja(`${cabHoja(S.yo?.id === id ? "Tu perfil" : "Editar perfil")}
+      <form id="f-perfil" autocomplete="off">
+        <div class="perfil-cab">${avatar(vista, "xl")}<div style="flex:1;min-width:0">
+          <input class="input-grande" name="nombre" maxlength="40" value="${esc(e.nombre)}" placeholder="Nombre" required></div></div>
+        <label class="campo"><span>Tu frase</span><input name="bio" maxlength="140" value="${esc(e.bio)}" placeholder="Ej: el que siempre pone la música"></label>
+        <div class="campo"><span>Avatar</span><div class="emojis">
+          <button type="button" class="emo ${!e.emoji ? "on" : ""}" data-a="emo" data-v="">${esc(iniciales(e.nombre || "?"))}</button>
+          ${EMOJIS.map((x) => `<button type="button" class="emo ${e.emoji === x ? "on" : ""}" data-a="emo" data-v="${x}">${x}</button>`).join("")}</div></div>
+        <div class="campo"><span>Color</span><div class="colores">
+          ${COLORES.map((h) => `<button type="button" class="col ${e.color === h ? "on" : ""}" data-a="col" data-v="${h}" style="--h:${h}" aria-label="Color"></button>`).join("")}</div></div>
+        <div class="pie-hoja"><button class="btn full" type="submit">Guardar perfil</button></div>
+      </form>`);
+  }
+  function guardarEdicion() {
+    const f = $("#f-perfil");
+    if (f && edicion) { edicion.nombre = f.nombre.value; edicion.bio = f.bio.value; }
+  }
+  function repintarEdicion() { const y = hoja.scrollTop; hojaEditarPerfil(edicion.id); hoja.scrollTop = y; }
 
   // Formulario rápido de plan
   let borrador = null;
@@ -500,25 +634,6 @@
       ${S.admin ? `<div class="acciones-pie"><button class="btn sec" data-a="editar-plan" data-id="${p.id}">Editar</button><button class="btn peligro" data-a="borrar-plan" data-id="${p.id}">Borrar</button></div>` : ""}`);
   }
 
-  function hojaPerfil(id) {
-    const p = persona(id);
-    if (!p) return;
-    const r = stats(S.planes).find((x) => x.p.id === id);
-    const ult = S.planes.filter((x) => x.asistentes.includes(id)).slice(0, 5);
-    abrirHoja(`<div class="hoja-cab"><span></span><button class="cerrar" data-a="cerrar" aria-label="Cerrar">${ICON.cerrar}</button></div>
-      <div class="perfil-cab" style="margin-top:-28px">${avatar(p, "xl")}<div><div class="h2">${esc(p.nombre)}</div>
-        <div class="sub">${r.ultimo ? `Último plan: ${fechaCorta(r.ultimo)}` : "Aún sin planes"}</div></div></div>
-      <div class="stats">
-        <div class="stat"><b>${pct(r.pctAsistencia)}</b><span>asistencia · ${r.asistencias} de ${r.total}</span></div>
-        <div class="stat"><b>${r.casas}</b><span>veces puso casa · ${pct(r.pctCasa)}</span></div>
-        <div class="stat"><b>${dec(r.promMes)}</b><span>planes por mes</span></div>
-        <div class="stat"><b>${r.racha}</b><span>racha actual</span></div>
-      </div>
-      ${ult.length ? `<div class="seccion" style="margin-top:22px"><div class="cab"><span class="eyebrow">Últimos planes</span></div>
-        <div class="lista">${ult.map((x) => `<button class="fila" data-a="ver-plan" data-id="${x.id}"><span class="cuerpo"><div class="nom">${esc(x.titulo)}</div>
-          <div class="det">${fechaCorta(x.fecha)} ${x.fecha.slice(0, 4)}</div></span>${x.anfitrion === id ? "<span>🏠</span>" : ""}</button>`).join("")}</div></div>` : ""}
-      ${S.admin ? `<div class="acciones-pie"><button class="btn sec" data-a="renombrar" data-id="${id}">Renombrar</button><button class="btn peligro" data-a="borrar-persona" data-id="${id}">Borrar</button></div>` : ""}`);
-  }
 
   function hojaNuevaPersona(volverAPlan = false) {
     abrirHoja(`${cabHoja("Añadir gente")}
@@ -625,10 +740,18 @@
     "nueva-persona": () => { if (exigirAdmin("Entra con tu correo de admin para añadir gente.")) hojaNuevaPersona(); },
     "nueva-persona-rapida": () => { guardarCampos(); hojaNuevaPersona(true); },
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
-    renombrar: async (d) => {
+    "quien-soy": () => hojaQuienSoy(),
+    soy: async (d) => {
       const p = persona(d.id);
-      const nombre = prompt("Nuevo nombre", p.nombre)?.trim();
-      if (nombre && nombre !== p.nombre && await hacer(() => api.renombrarPersona(d.id, nombre), "Nombre actualizado")) hojaPerfil(d.id);
+      if (!confirm(`¿Eres ${p.nombre}? Tu correo quedará unido a este perfil.`)) return;
+      if (await hacer(() => api.vincular(d.id, null), `¡Hola, ${p.nombre}!`)) hojaPerfil(d.id);
+    },
+    "perfil-todo": (d) => hojaPerfil(d.id, true),
+    "editar-perfil": (d) => { edicion = null; hojaEditarPerfil(d.id); },
+    emo: (d) => { guardarEdicion(); edicion.emoji = d.v; repintarEdicion(); },
+    col: (d) => { guardarEdicion(); edicion.color = Number(d.v); repintarEdicion(); },
+    desvincular: async (d) => {
+      if (confirm(`¿Soltar la cuenta de ${persona(d.id).nombre}? Su correo tendrá que elegir perfil otra vez.`) && await hacer(() => api.desvincular(d.id), "Cuenta soltada")) hojaPerfil(d.id);
     },
     "borrar-persona": async (d) => {
       if (confirm(`¿Borrar a ${persona(d.id).nombre}? Desaparecerá de todos los planes.`)) { cerrarHoja(); await hacer(() => api.borrarPersona(d.id), "Persona borrada"); }
@@ -672,6 +795,13 @@
     if (fn) { ev.preventDefault(); fn(el.dataset, el); }
   });
 
+  document.addEventListener("input", (ev) => {
+    if (!ev.target.matches("#f-quien [name=nombre]")) return;
+    const n = ev.target.value.trim().toLowerCase();
+    const p = n && S.personas.find((x) => x.nombre.toLowerCase() === n);
+    $("#quien-pista").innerHTML = !n ? "&nbsp;" : p ? (p.user_id ? "⚠️ Ese perfil ya pertenece a otra cuenta." : `✓ Te unirás al perfil de <b>${esc(p.nombre)}</b> con sus estadísticas.`) : "Se creará un perfil nuevo con ese nombre.";
+  });
+
   document.addEventListener("change", (ev) => {
     if (ev.target.matches("#f-plan [name=fecha]") && ev.target.value) { guardarCampos(); borrador.fecha = ev.target.value; repintarPlan(); }
   });
@@ -706,6 +836,27 @@
         $("#recien").insertAdjacentHTML("beforeend", `<span class="chip on">✓ ${esc(nombre)}</span>`);
       }
       btn.disabled = false; f.nombre.focus();
+    }
+    if (f.id === "f-quien") {
+      const nombre = f.nombre.value.trim().replace(/\s+/g, " ");
+      if (!nombre) return;
+      const existe = S.personas.find((p) => p.nombre.toLowerCase() === nombre.toLowerCase());
+      if (existe && existe.user_id) return toast("Ese nombre ya pertenece a otra cuenta", true);
+      btn.disabled = true;
+      if (await hacer(() => api.vincular(null, nombre), existe ? `¡Hola, ${existe.nombre}! Tu perfil ya tiene tus datos` : `¡Bienvenido, ${nombre}!`)) {
+        if (S.yo) hojaPerfil(S.yo.id); else cerrarHoja();
+      } else btn.disabled = false;
+    }
+    if (f.id === "f-perfil") {
+      guardarEdicion();
+      const e = edicion;
+      const nombre = e.nombre.trim().replace(/\s+/g, " ");
+      if (!nombre) return toast("Pon un nombre", true);
+      btn.disabled = true;
+      const propio = S.yo?.id === e.id;
+      if (await hacer(() => api.editarPerfil(e.id, { nombre, bio: e.bio.trim(), emoji: e.emoji, color: e.color }, propio), "Perfil guardado")) {
+        edicion = null; hojaPerfil(e.id);
+      } else btn.disabled = false;
     }
     if (f.id === "f-encuesta") {
       const opciones = [...new Set(recogerOpciones().map((s) => s.trim()).filter(Boolean))];
@@ -744,5 +895,6 @@
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }
     await cargar();
+    if (S.user && S.migracion && !S.yo && !S.errorCarga) hojaQuienSoy();
   });
 })();
