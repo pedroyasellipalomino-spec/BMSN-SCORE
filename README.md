@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql` y `08_jugador_del_mes.sql`.
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql`, `08_jugador_del_mes.sql` y `09_mejoras.sql`.
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
@@ -19,6 +19,13 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - Cada correo que entra elige quién es: si escribe un nombre que ya existe, su cuenta se une a ese perfil con todas sus estadísticas; si no, se crea uno nuevo.
 - Cada miembro edita su propio perfil (nombre, emoji, color y frase). El admin puede editar cualquiera y soltar una cuenta de un perfil equivocado.
 - El perfil muestra asistencia, veces que puso casa, racha, encuestas votadas y el historial de actividad. Qué votó cada uno solo lo ve esa persona (y el admin).
+
+## Mantenimiento y seguridad
+
+- **Supabase no se pausa:** cada día Supabase hace una consulta a su propia API (pg_cron + pg_net) y, como respaldo, una GitHub Action (`mantener-activo.yml`) lo hace cada 3 días.
+- **Copias de seguridad:** cada domingo se guarda una copia completa en la tabla privada `bmsn_copias` (se conservan 12). Desde el panel de admin se puede hacer una al momento y descargar cualquiera en JSON.
+- **Contraseña del grupo:** una cuenta que ya entró con el código del correo solo puede volver a entrar con código, así nadie puede suplantarla con la contraseña del grupo.
+- **Renombrar personas** actualiza sus opciones y votos en las encuestas del Jugador del mes.
 
 ## Temas
 

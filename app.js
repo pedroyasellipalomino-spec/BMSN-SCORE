@@ -142,6 +142,9 @@
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
       ponerTema: (tema) => q(sb.rpc("poner_tema", { p_tema: tema })),
+      hacerCopia: () => q(sb.rpc("hacer_copia")),
+      listarCopias: () => q(sb.rpc("listar_copias")),
+      descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
       automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
       votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
       cerrarEncuesta: (id) => q(sb.from("encuestas").update({ cerrada: true }).eq("id", id)),
@@ -149,6 +152,7 @@
       async entrarConCodigo(email, codigo) {
         const { error } = await sb.auth.verifyOtp({ email, token: codigo, type: "email" });
         if (error) throw new Error(/expired|invalid/i.test(error.message) ? "Código incorrecto o vencido. Pide uno nuevo." : error.message);
+        await sb.rpc("asegurar_cuenta");
       },
       salir: () => sb.auth.signOut(),
       alCambiarSesion: (fn) => sb.auth.onAuthStateChange((ev, s) => setTimeout(() => fn(s?.user ?? null), 0)),
@@ -181,6 +185,7 @@
     const mio = {};
     let user = null, listener = () => {};
     const emailsAdmin = [];
+    const copias = [{ id: 1, creada: sumarDias(hoy(), -3) + "T08:15:00Z", planes: 26, personas: 8, votos: 21 }];
     const pausa = () => new Promise((r) => setTimeout(r, 120));
     return {
       async cargar() {
@@ -235,6 +240,9 @@
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
       async automatizar() { return "nada"; },
+      async hacerCopia() { copias.unshift({ id: copias.length + 1, creada: new Date().toISOString(), planes: planes.length, personas: personas.length, votos: 0 }); },
+      async listarCopias() { return copias; },
+      async descargarCopia() { return { version: 1, fecha: new Date().toISOString(), personas, planes, asistencias: asist, encuestas }; },
       async cerrarEncuesta(id) { encuestas.find((e) => e.id === id).cerrada = true; },
       async entrar() { await pausa(); },
       async salir() { user = null; listener(null); },
@@ -344,6 +352,7 @@
     const inst = v === "inicio" ? bannerInstalar() : "";
     $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
+    if (v === "admin") pintarCopias();
     document.body.classList.toggle("miembro", !!S.user && !S.admin);
   }
 
@@ -571,11 +580,16 @@
         <div class="seccion"><div class="cab"><span class="eyebrow">Contraseña del grupo</span>
           <span class="estado ${S.claveGrupo ? "" : "cerrada"}">${S.claveGrupo ? "Activa" : S.claveGrupo === false ? "Sin poner" : "Falta SQL"}</span></div>
           ${S.claveGrupo === null ? `<p class="sub">Ejecuta <b>supabase/04_clave_grupo.sql</b> en Supabase para activarla.</p>` : `
-          <p class="sub" style="margin:-4px 0 12px">Quien la sepa entra con su correo sin verificarlo. Tu correo de admin siempre entra con enlace.</p>
+          <p class="sub" style="margin:-4px 0 12px">Quien la sepa entra con su correo sin verificarlo. Tu correo de admin siempre entra con código.</p>
           <form id="f-clave-grupo" class="form-linea" autocomplete="off">
             <input type="text" name="clave" placeholder="${S.claveGrupo ? "Nueva contraseña" : "Contraseña del grupo"}" required>
             <button class="btn chico" type="submit">${S.claveGrupo ? "Cambiar" : "Guardar"}</button>
           </form>`}
+        </div>
+        <div class="seccion"><div class="cab"><span class="eyebrow">Copias de seguridad</span><button class="link" data-a="hacer-copia">Hacer una ahora</button></div>
+          <p class="sub" style="margin:-4px 0 12px">Cada domingo se guarda sola una copia completa (se conservan las 12 últimas). Descarga una de vez en cuando y guárdala en tu iCloud o tu computadora.</p>
+          <button class="btn full" data-a="descargar-copia" data-id="">⬇ Descargar copia completa (ahora)</button>
+          <div class="lista" id="lista-copias" style="margin-top:12px"><div class="fila"><span class="cuerpo"><div class="det">Cargando copias…</div></span></div></div>
         </div>
         <div class="seccion"><div class="cab"><span class="eyebrow">Admins</span></div>
           <div class="lista">${S.emailsAdmin.map((e) => `<div class="fila"><span class="cuerpo"><div class="nom" style="text-transform:none">${esc(e)}</div>
@@ -589,6 +603,30 @@
         </div>
         </div>
       </div>`;
+  }
+
+  async function pintarCopias() {
+    const caja = $("#lista-copias");
+    if (!caja) return;
+    try {
+      const l = await api.listarCopias();
+      if (!$("#lista-copias")) return;
+      $("#lista-copias").innerHTML = l.length ? l.map((c) => {
+        const f = new Date(c.creada);
+        const d = f.toLocaleDateString("en-CA", { timeZone: TZ });
+        return `<button class="fila" data-a="descargar-copia" data-id="${c.id}"><span class="cuerpo">
+          <div class="nom" style="text-transform:none">${diaSemana(d)} ${fechaCorta(d)} ${d.slice(0, 4)}</div>
+          <div class="det">${c.planes} planes · ${c.personas} personas · ${c.votos} votos</div></span><span class="der">⬇</span></button>`;
+      }).join("") : `<div class="fila"><span class="cuerpo"><div class="det">Aún no hay copias automáticas: la primera se hace el domingo.</div></span></div>`;
+    } catch (e) {
+      if ($("#lista-copias")) $("#lista-copias").innerHTML = `<div class="fila"><span class="cuerpo"><div class="det">${esc(msgError(e))}</div></span></div>`;
+    }
+  }
+
+  function descargarArchivo(nombre, contenido, tipo) {
+    const blob = new Blob([contenido], { type: tipo });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: nombre });
+    document.body.append(a); a.click(); a.remove();
   }
 
   function descargarCSV() {
@@ -743,7 +781,7 @@
         <p class="sub" style="margin:0 0 16px">Escribe tu correo y la contraseña del grupo. Entras al momento, sin verificar nada.</p>
         <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="username" placeholder="nombre@gmail.com" value="${correo}"></label>
         <label class="campo"><span>Contraseña del grupo</span><div class="pass"><input type="password" name="clave" required autocomplete="current-password" placeholder="La que te pasaron en el grupo"><button type="button" class="ver-pass" data-a="ver-pass" aria-label="Mostrar contraseña">👁</button></div></label>
-        <p class="ayuda" style="margin:-8px 0 16px">Da igual mayúsculas, tildes o espacios.</p>
+        <p class="ayuda" style="margin:-8px 0 16px">Da igual mayúsculas, tildes o espacios. Si ya entraste alguna vez con código, usa «Código por correo».</p>
         <button class="btn full" type="submit">Entrar</button>
       </form>` : `
       <p class="sub" style="margin:0 0 16px">Te enviamos a tu correo un código de 6 dígitos. Sin contraseñas.</p>
@@ -1199,6 +1237,16 @@
     },
     "ir-admin": () => { cerrarHoja(); location.hash = "#admin"; },
     csv: () => descargarCSV(),
+    "hacer-copia": async () => { if (await hacer(() => api.hacerCopia(), "Copia guardada")) pintarCopias(); },
+    "descargar-copia": async (d) => {
+      try {
+        toast("Preparando copia…");
+        const datos = await api.descargarCopia(d.id ? Number(d.id) : null);
+        const fecha = (datos?.fecha || new Date().toISOString()).slice(0, 10);
+        descargarArchivo(`bmsn-copia-${fecha}.json`, JSON.stringify(datos, null, 2), "application/json");
+        toast("Copia descargada");
+      } catch (e) { toast(msgError(e), true); }
+    },
     "quitar-admin": async (d) => { if (confirm(`¿Quitar a ${d.v} como admin?`)) await hacer(() => api.quitarAdmin(d.v), "Admin quitado"); },
     "subir-foto": () => $("#input-foto")?.click(),
     "quitar-foto": async (d) => { if (await hacer(() => api.quitarFoto(d.id), "Foto quitada")) { edicion.foto = null; repintarEdicion(); } },
