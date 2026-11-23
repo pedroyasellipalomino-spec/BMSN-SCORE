@@ -1,8 +1,11 @@
-/* BMSN — interfaz. Lee los JSON de /data y genera issues de GitHub para escribir. */
+/* BMSN — interfaz sobre Supabase. */
 (() => {
   "use strict";
 
-  const S = { config: {}, personas: [], planes: [], encuestas: [], votos: {}, orden: { campo: "asistencias", asc: false } };
+  const S = {
+    personas: [], planes: [], encuestas: [], resultados: [], misVotos: {}, votosAdmin: [],
+    user: null, admin: false, orden: { campo: "asistencias", asc: false }, emailLogin: "",
+  };
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -11,74 +14,123 @@
   const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
   const nombreMes = (m) => { const [y, mm] = m.split("-"); return `${MESES[+mm - 1]} ${y}`; };
   const fechaLarga = (f) => { const [y, m, d] = f.split("-"); return `${+d} ${MESES[+m - 1].slice(0, 3)} ${y}`; };
+  const TZ = "America/Lima"; // igual que bmsn_mes_actual() en supabase/esquema.sql
 
   function mesActual() {
-    const tz = S.config.zonaHoraria || "America/Lima";
-    const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit" }).formatToParts(new Date());
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit" }).formatToParts(new Date());
     return `${p.find((x) => x.type === "year").value}-${p.find((x) => x.type === "month").value}`;
   }
+  const hoy = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
 
-  async function cargar(nombre, defecto) {
-    try {
-      const r = await fetch(`data/${nombre}.json?t=${Date.now()}`, { cache: "no-store" });
-      if (!r.ok) throw new Error(r.status);
-      return await r.json();
-    } catch {
-      return defecto;
+  function aviso(html, tipo = "") {
+    const a = $("#aviso");
+    a.innerHTML = html;
+    a.className = "aviso " + tipo;
+    a.hidden = !html;
+    if (html) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  const errorMsg = (e) => esc(e?.message || e?.error_description || String(e));
+
+  // ---------- Supabase ----------
+  const cfg = window.BMSN_CONFIG || {};
+  if (!cfg.supabaseUrl || !cfg.supabaseKey || !window.supabase) {
+    aviso("BMSN todavía no está conectado a la base de datos (falta <code>config.js</code>).", "error");
+    return;
+  }
+  const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+
+  async function q(promesa) {
+    const { data, error } = await promesa;
+    if (error) throw error;
+    return data;
+  }
+
+  async function cargarDatos() {
+    const [personas, planes, asist, encuestas, resultados] = await Promise.all([
+      q(sb.from("personas").select("id,nombre").order("nombre")),
+      q(sb.from("planes").select("id,fecha,titulo,anfitrion,notas").order("fecha", { ascending: false })),
+      q(sb.from("asistencias").select("plan_id,persona_id")),
+      q(sb.from("encuestas").select("id,mes,pregunta,opciones,creado").order("mes", { ascending: false }).order("creado", { ascending: false })),
+      q(sb.rpc("resultados")),
+    ]);
+    const porPlan = {};
+    asist.forEach((a) => (porPlan[a.plan_id] ??= []).push(a.persona_id));
+    S.personas = personas;
+    S.planes = planes.map((p) => ({ ...p, asistentes: porPlan[p.id] || [] }));
+    S.encuestas = encuestas;
+    S.resultados = resultados;
+    S.misVotos = {};
+    S.votosAdmin = [];
+    if (S.user) {
+      const votos = await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha"));
+      votos.filter((v) => v.user_id === S.user.id).forEach((v) => (S.misVotos[v.encuesta_id] = v.opcion));
+      if (S.admin) S.votosAdmin = votos;
     }
   }
 
-  // ---------- Escritura vía issue de GitHub ----------
-  function abrirIssue(titulo, datos) {
-    const repo = S.config.repo;
-    if (!repo) return aviso("Falta configurar <code>repo</code> en data/config.json.");
-    const body =
-      "Pulsa **Submit new issue** para enviar. No edites el bloque de abajo.\n\n" +
-      "```json\n" + JSON.stringify({ bmsn: 1, ...datos }, null, 2) + "\n```\n";
-    const url = `https://github.com/${repo}/issues/new?title=${encodeURIComponent("BMSN · " + titulo)}&body=${encodeURIComponent(body)}`;
-    window.open(url, "_blank", "noopener");
-    aviso("Se abrió GitHub con el formulario relleno. Pulsa <strong>Submit new issue</strong>; en 1–2 minutos verás el cambio aquí.");
+  async function refrescar() {
+    try {
+      await cargarDatos();
+      pintarTodo();
+    } catch (e) {
+      aviso("No se pudieron cargar los datos: " + errorMsg(e), "error");
+    }
   }
 
-  function aviso(html) {
-    const a = $("#aviso");
-    a.innerHTML = html;
-    a.hidden = false;
-    window.scrollTo({ top: 0, behavior: "smooth" });
+  // ---------- Sesión ----------
+  async function actualizarSesion(session) {
+    S.user = session?.user ?? null;
+    S.admin = false;
+    if (S.user) {
+      try { S.admin = await q(sb.rpc("reclamar_admin")); } catch { S.admin = false; }
+    }
+    document.body.classList.toggle("admin", S.admin);
+    $("#sesion").innerHTML = S.user
+      ? `<span class="correo" title="${esc(S.user.email)}">${S.admin ? "👑 " : ""}${esc(S.user.email)}</span><button class="btn sec peq" id="btn-salir">Salir</button>`
+      : `<button class="btn peq" id="btn-entrar">Entrar</button>`;
+    await refrescar();
+  }
+
+  function abrirLogin() {
+    $("#form-email").hidden = false;
+    $("#form-codigo").hidden = true;
+    $("#err-login").textContent = "";
+    $("#dlg-login").showModal();
+    $("#form-email [name=email]").focus();
   }
 
   // ---------- Estadísticas ----------
-  function periodos() {
-    const meses = [...new Set(S.planes.map((p) => p.fecha.slice(0, 7)))].sort().reverse();
-    const anios = [...new Set(meses.map((m) => m.slice(0, 4)))];
-    return { meses, anios };
-  }
-
   function planesDelPeriodo(per) {
-    if (!per || per === "todo") return S.planes;
-    return S.planes.filter((p) => p.fecha.startsWith(per));
+    return !per || per === "todo" ? S.planes : S.planes.filter((p) => p.fecha.startsWith(per));
   }
 
   function estadisticas(planes) {
-    const mesesConPlanes = new Set(planes.map((p) => p.fecha.slice(0, 7))).size;
+    const meses = new Set(planes.map((p) => p.fecha.slice(0, 7))).size;
     return S.personas.map((pe) => {
       const asistencias = planes.filter((p) => p.asistentes.includes(pe.id)).length;
       const casas = planes.filter((p) => p.anfitrion === pe.id).length;
       return {
-        id: pe.id,
-        nombre: pe.nombre,
-        asistencias,
-        casas,
+        id: pe.id, nombre: pe.nombre, asistencias, casas,
         pctAsistencia: planes.length ? asistencias / planes.length : NaN,
         pctCasa: asistencias ? casas / asistencias : NaN,
-        promMes: mesesConPlanes ? asistencias / mesesConPlanes : NaN,
+        promMes: meses ? asistencias / meses : NaN,
       };
     });
   }
 
+  function pintarFiltro() {
+    const sel = $("#filtro-periodo");
+    const prev = sel.value;
+    const meses = [...new Set(S.planes.map((p) => p.fecha.slice(0, 7)))].sort().reverse();
+    const anios = [...new Set(meses.map((m) => m.slice(0, 4)))];
+    sel.innerHTML = `<option value="todo">Todo</option>` +
+      anios.map((a) => `<option value="${a}">Año ${a}</option>`).join("") +
+      meses.map((m) => `<option value="${m}">${nombreMes(m)}</option>`).join("");
+    if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  }
+
   function pintarResumen() {
-    const per = $("#filtro-periodo").value;
-    const planes = planesDelPeriodo(per);
+    const planes = planesDelPeriodo($("#filtro-periodo").value);
     const st = estadisticas(planes);
     const conCasa = planes.filter((p) => p.anfitrion).length;
     const promAsist = planes.length ? planes.reduce((a, p) => a + p.asistentes.length, 0) / planes.length : NaN;
@@ -89,14 +141,13 @@
       ["Personas", S.personas.length],
       ["Asistentes por plan", dec(promAsist)],
       ["Planes en casa", conCasa],
-      ["Más veces puso casa", topCasa && topCasa.casas ? `${esc(topCasa.nombre)} (${topCasa.casas})` : "—"],
+      ["Más veces puso casa", topCasa?.casas ? `${esc(topCasa.nombre)} (${topCasa.casas})` : "—"],
     ].map(([l, v]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("");
 
     const { campo, asc } = S.orden;
     st.sort((a, b) => {
-      let x = a[campo], y = b[campo];
-      if (campo === "nombre") return asc ? x.localeCompare(y) : y.localeCompare(x);
-      x = isFinite(x) ? x : -1; y = isFinite(y) ? y : -1;
+      if (campo === "nombre") return asc ? a.nombre.localeCompare(b.nombre) : b.nombre.localeCompare(a.nombre);
+      const x = isFinite(a[campo]) ? a[campo] : -1, y = isFinite(b[campo]) ? b[campo] : -1;
       return asc ? x - y : y - x;
     });
     $$("#tabla-promedios th").forEach((th) => {
@@ -113,27 +164,15 @@
           <td class="num">${pct(r.pctCasa)}</td>
           <td class="num">${dec(r.promMes)}</td>
         </tr>`).join("")
-      : `<tr><td colspan="6" class="vacio">Aún no hay personas. Añádelas en la pestaña Personas.</td></tr>`;
-  }
-
-  function pintarFiltro() {
-    const sel = $("#filtro-periodo");
-    const prev = sel.value;
-    const { meses, anios } = periodos();
-    sel.innerHTML =
-      `<option value="todo">Todo</option>` +
-      anios.map((a) => `<option value="${a}">Año ${a}</option>`).join("") +
-      meses.map((m) => `<option value="${m}">${nombreMes(m)}</option>`).join("");
-    if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+      : `<tr><td colspan="6" class="vacio">Aún no hay personas.</td></tr>`;
   }
 
   // ---------- Planes ----------
-  const nombreDe = (id) => S.personas.find((p) => p.id === id)?.nombre ?? "(persona borrada)";
+  const nombreDe = (id) => S.personas.find((p) => p.id === id)?.nombre ?? "(borrada)";
 
   function pintarPlanes() {
-    const planes = [...S.planes].sort((a, b) => b.fecha.localeCompare(a.fecha));
-    $("#lista-planes").innerHTML = planes.length
-      ? planes.map((p) => `<div class="item">
+    $("#lista-planes").innerHTML = S.planes.length
+      ? S.planes.map((p) => `<div class="item">
           <div class="cab">
             <span class="t">${esc(p.titulo)}</span>
             <span class="meta">${fechaLarga(p.fecha)} · ${p.asistentes.length} asistentes</span>
@@ -143,29 +182,51 @@
             ${p.asistentes.filter((a) => a !== p.anfitrion).map((a) => `<span class="tag">${esc(nombreDe(a))}</span>`).join("")}
           </div>
           ${p.notas ? `<div class="meta">${esc(p.notas)}</div>` : ""}
-          <div class="votar"><button class="btn sec peq" data-borrar-plan="${esc(p.id)}">Borrar</button></div>
+          <div class="acciones solo-admin">
+            <button class="btn sec peq" data-editar-plan="${p.id}">Editar</button>
+            <button class="btn peligro peq" data-borrar-plan="${p.id}">Borrar</button>
+          </div>
         </div>`).join("")
       : `<div class="vacio">Todavía no hay planes anotados.</div>`;
   }
 
-  function pintarFormPlan() {
-    const ord = [...S.personas].sort((a, b) => a.nombre.localeCompare(b.nombre));
-    $("#form-plan [name=anfitrion]").innerHTML =
-      `<option value="">— Nadie / fuera de casa —</option>` + ord.map((p) => `<option value="${esc(p.id)}">${esc(p.nombre)}</option>`).join("");
-    $("#chips-asistentes").innerHTML = ord.length
-      ? ord.map((p) => `<label class="chip"><input type="checkbox" value="${esc(p.id)}"><span>${esc(p.nombre)}</span></label>`).join("")
-      : `<span class="meta">Primero añade personas.</span>`;
-    const f = $("#form-plan [name=fecha]");
-    if (!f.value) f.value = new Date().toISOString().slice(0, 10);
+  function pintarFormPlan(plan) {
+    const f = $("#form-plan");
+    const sel = plan ? new Set(plan.asistentes) : new Set($$("#chips-asistentes input:checked").map((i) => i.value));
+    const anf = plan ? plan.anfitrion || "" : f.anfitrion.value;
+    f.anfitrion.innerHTML = `<option value="">— Nadie / fuera de casa —</option>` +
+      S.personas.map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("");
+    f.anfitrion.value = anf;
+    $("#chips-asistentes").innerHTML = S.personas.length
+      ? S.personas.map((p) => `<label class="chip"><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? "checked" : ""}><span>${esc(p.nombre)}</span></label>`).join("")
+      : `<span class="meta">Primero añade personas en la pestaña Personas.</span>`;
+    if (plan) {
+      f.id.value = plan.id; f.fecha.value = plan.fecha; f.titulo.value = plan.titulo; f.notas.value = plan.notas || "";
+    }
+    if (!f.fecha.value) f.fecha.value = hoy();
+    const editando = !!f.id.value;
+    $("#titulo-form-plan").textContent = editando ? "✏️ Editar plan" : "➕ Anotar un plan";
+    $("#cancelar-plan").hidden = !editando;
+  }
+
+  function limpiarFormPlan() {
+    const f = $("#form-plan");
+    f.reset(); f.id.value = "";
+    $$("#chips-asistentes input").forEach((i) => (i.checked = false));
+    pintarFormPlan();
   }
 
   // ---------- Personas ----------
   function pintarPersonas() {
-    const ord = [...S.personas].sort((a, b) => a.nombre.localeCompare(b.nombre));
-    $("#lista-personas").innerHTML = ord.length
-      ? ord.map((p) => `<div class="item"><div class="cab">
+    const st = Object.fromEntries(estadisticas(S.planes).map((r) => [r.id, r]));
+    $("#lista-personas").innerHTML = S.personas.length
+      ? S.personas.map((p) => `<div class="item"><div class="cab">
           <span class="t">${esc(p.nombre)}</span>
-          <span class="meta">${p.github ? `GitHub: <a href="https://github.com/${esc(p.github)}" target="_blank" rel="noopener">@${esc(p.github)}</a> · puede votar` : "sin cuenta de GitHub · no vota"}</span>
+          <span class="meta">${st[p.id].asistencias} planes · ${st[p.id].casas} veces puso casa</span>
+        </div>
+        <div class="acciones solo-admin">
+          <button class="btn sec peq" data-renombrar="${p.id}">Renombrar</button>
+          <button class="btn peligro peq" data-borrar-persona="${p.id}">Borrar</button>
         </div></div>`).join("")
       : `<div class="vacio">Todavía no hay personas.</div>`;
   }
@@ -173,14 +234,15 @@
   // ---------- Encuestas ----------
   function pintarEncuestas() {
     const actual = mesActual();
-    const lista = [...S.encuestas].sort((a, b) => b.mes.localeCompare(a.mes));
-    $("#lista-encuestas").innerHTML = lista.length
-      ? lista.map((e) => {
-          const votos = Object.values(S.votos[e.id] || {});
-          const total = votos.length;
-          const cuenta = e.opciones.map((o) => ({ o, n: votos.filter((v) => v.opcion === o).length }));
+    $("#lista-encuestas").innerHTML = S.encuestas.length
+      ? S.encuestas.map((e) => {
+          const res = S.resultados.filter((r) => r.encuesta_id === e.id);
+          const cuenta = e.opciones.map((o) => ({ o, n: Number(res.find((r) => r.opcion === o)?.votos || 0) }));
+          const total = cuenta.reduce((a, c) => a + c.n, 0);
           const max = Math.max(0, ...cuenta.map((c) => c.n));
           const abierta = e.mes === actual;
+          const mio = S.misVotos[e.id];
+          const votantes = S.votosAdmin.filter((v) => v.encuesta_id === e.id);
           return `<div class="item">
             <div class="cab">
               <span class="t">${esc(e.pregunta)}</span>
@@ -188,13 +250,18 @@
                 <span class="estado ${abierta ? "abierta" : "cerrada"}">${abierta ? "Abierta" : e.mes > actual ? "Próxima" : "Cerrada"}</span></span>
             </div>
             ${cuenta.map((c) => `<div class="opcion ${c.n && c.n === max ? "gana" : ""}">
-                <span>${esc(c.o)}</span><span class="meta">${c.n} · ${total ? Math.round((c.n / total) * 100) : 0}%</span>
+                <span>${esc(c.o)}${mio === c.o ? ' <span class="mi-voto">✓ tu voto</span>' : ""}</span>
+                <span class="meta">${c.n} · ${total ? Math.round((c.n / total) * 100) : 0}%</span>
                 <span class="b"><i style="width:${total ? (c.n / total) * 100 : 0}%"></i></span>
               </div>`).join("")}
             ${abierta ? `<div class="votar">
-                <select data-voto-sel="${esc(e.id)}">${e.opciones.map((o) => `<option>${esc(o)}</option>`).join("")}</select>
-                <button class="btn" data-votar="${esc(e.id)}">Votar con mi cuenta de GitHub</button>
+                <select data-voto-sel="${e.id}">${e.opciones.map((o) => `<option ${mio === o ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>
+                <button class="btn" data-votar="${e.id}">${mio ? "Cambiar mi voto" : S.user ? "Votar" : "Entrar con mi correo y votar"}</button>
               </div>` : ""}
+            ${S.admin ? `<details class="votantes"><summary>Quién votó (${votantes.length}) — solo lo ves tú</summary>
+                ${votantes.map((v) => `<div>${esc(v.email)} → ${esc(v.opcion)}</div>`).join("") || "Nadie todavía."}
+              </details>
+              <div class="acciones"><button class="btn peligro peq" data-borrar-encuesta="${e.id}">Borrar encuesta</button></div>` : ""}
           </div>`;
         }).join("")
       : `<div class="vacio">No hay encuestas todavía.</div>`;
@@ -211,14 +278,26 @@
     pintarEncuestas();
   }
 
-  // ---------- Eventos ----------
+  // ---------- Acciones ----------
+  async function hacer(fn, ok) {
+    try {
+      await fn();
+      aviso(ok ? "✅ " + ok : "", "ok");
+      await refrescar();
+      return true;
+    } catch (e) {
+      aviso("❌ " + errorMsg(e), "error");
+      return false;
+    }
+  }
+
   function eventos() {
     $$(".tab").forEach((b) => b.addEventListener("click", () => {
       $$(".tab").forEach((x) => x.classList.toggle("activa", x === b));
       $$(".panel").forEach((p) => p.classList.toggle("activo", p.id === b.dataset.tab));
       history.replaceState(null, "", "#" + b.dataset.tab);
     }));
-    const irHash = () => { const h = location.hash.slice(1); if (h) $(`.tab[data-tab="${CSS.escape(h)}"]`)?.click(); };
+    const irHash = () => { const h = location.hash.slice(1); if (/^\w+$/.test(h)) $(`.tab[data-tab="${h}"]`)?.click(); };
     window.addEventListener("hashchange", irHash);
     irHash();
 
@@ -229,58 +308,106 @@
       pintarResumen();
     }));
 
-    $("#form-plan").addEventListener("submit", (ev) => {
+    // Login
+    $("#form-email").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const email = ev.target.email.value.trim().toLowerCase();
+      $("#err-login").textContent = "";
+      const btn = ev.target.querySelector("button");
+      btn.disabled = true;
+      const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+      btn.disabled = false;
+      if (error) { $("#err-login").textContent = error.message; return; }
+      S.emailLogin = email;
+      $("#txt-codigo").textContent = `Te enviamos un correo a ${email}. Escribe el código o pulsa el enlace del correo.`;
+      $("#form-email").hidden = true;
+      $("#form-codigo").hidden = false;
+      $("#form-codigo [name=codigo]").focus();
+    });
+    $("#form-codigo").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const token = ev.target.codigo.value.trim();
+      const { error } = await sb.auth.verifyOtp({ email: S.emailLogin, token, type: "email" });
+      if (error) { $("#err-login").textContent = "Código incorrecto o vencido."; return; }
+      ev.target.reset();
+      $("#dlg-login").close();
+    });
+    $("#otro-correo").addEventListener("click", () => { $("#form-email").hidden = false; $("#form-codigo").hidden = true; });
+
+    // Planes
+    $("#form-plan").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const f = ev.target;
-      const anfitrion = f.anfitrion.value || null;
       const asistentes = $$("#chips-asistentes input:checked").map((i) => i.value);
-      if (anfitrion && !asistentes.includes(anfitrion)) asistentes.push(anfitrion);
-      if (!asistentes.length) return aviso("Marca al menos una persona que asistió.");
-      abrirIssue(`plan · ${f.fecha.value} ${f.titulo.value}`, {
-        tipo: "plan", fecha: f.fecha.value, titulo: f.titulo.value.trim(), anfitrion, asistentes, notas: f.notas.value.trim(),
-      });
+      const anfitrion = f.anfitrion.value || null;
+      if (!asistentes.length && !anfitrion) return aviso("Marca al menos una persona que asistió.", "error");
+      const ok = await hacer(() => q(sb.rpc("guardar_plan", {
+        p_id: f.id.value || null, p_fecha: f.fecha.value, p_titulo: f.titulo.value,
+        p_anfitrion: anfitrion, p_asistentes: asistentes, p_notas: f.notas.value,
+      })), `Plan «${esc(f.titulo.value)}» guardado.`);
+      if (ok) limpiarFormPlan();
     });
+    $("#cancelar-plan").addEventListener("click", limpiarFormPlan);
 
-    $("#form-persona").addEventListener("submit", (ev) => {
+    // Personas
+    $("#form-persona").addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      const f = ev.target;
-      abrirIssue(`persona · ${f.nombre.value}`, {
-        tipo: "persona", nombre: f.nombre.value.trim(), github: f.github.value.trim().replace(/^@/, "") || null,
-      });
+      const nombre = ev.target.nombre.value.trim();
+      if (await hacer(() => q(sb.from("personas").insert({ nombre })), `${esc(nombre)} añadida.`)) ev.target.reset();
     });
 
-    $("#form-encuesta").addEventListener("submit", (ev) => {
+    // Encuestas
+    $("#form-encuesta").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const f = ev.target;
       const opciones = f.usarPersonas.checked
         ? S.personas.map((p) => p.nombre)
-        : f.opciones.value.split("\n").map((s) => s.trim()).filter(Boolean);
-      if (opciones.length < 2) return aviso("La encuesta necesita al menos dos opciones.");
-      abrirIssue(`encuesta · ${f.mes.value}`, { tipo: "encuesta", mes: f.mes.value, pregunta: f.pregunta.value.trim(), opciones });
+        : [...new Set(f.opciones.value.split("\n").map((s) => s.trim()).filter(Boolean))];
+      if (opciones.length < 2) return aviso("La encuesta necesita al menos dos opciones.", "error");
+      if (await hacer(() => q(sb.from("encuestas").insert({ mes: f.mes.value, pregunta: f.pregunta.value.trim(), opciones })), "Encuesta creada.")) {
+        f.reset(); pintarEncuestas();
+      }
     });
 
-    document.addEventListener("click", (ev) => {
-      const v = ev.target.closest("[data-votar]");
-      if (v) {
-        const id = v.dataset.votar;
-        const opcion = $(`[data-voto-sel="${CSS.escape(id)}"]`).value;
-        abrirIssue(`voto · ${id}`, { tipo: "voto", encuesta: id, opcion });
+    document.addEventListener("click", async (ev) => {
+      const t = ev.target.closest("button");
+      if (!t) return;
+      if (t.id === "btn-entrar") return abrirLogin();
+      if (t.id === "btn-salir") return sb.auth.signOut();
+      const d = t.dataset;
+      if (d.votar) {
+        if (!S.user) return abrirLogin();
+        const opcion = $(`[data-voto-sel="${d.votar}"]`).value;
+        return hacer(() => q(sb.rpc("votar", { p_encuesta: d.votar, p_opcion: opcion })), `Voto registrado: <strong>${esc(opcion)}</strong>.`);
       }
-      const b = ev.target.closest("[data-borrar-plan]");
-      if (b && confirm("¿Borrar este plan? Se enviará la petición a GitHub.")) {
-        abrirIssue(`borrar plan · ${b.dataset.borrarPlan}`, { tipo: "borrar-plan", id: b.dataset.borrarPlan });
+      if (d.editarPlan) {
+        pintarFormPlan(S.planes.find((p) => p.id === d.editarPlan));
+        $("#caja-plan").open = true;
+        return $("#caja-plan").scrollIntoView({ behavior: "smooth" });
+      }
+      if (d.borrarPlan && confirm("¿Borrar este plan?")) return hacer(() => q(sb.from("planes").delete().eq("id", d.borrarPlan)), "Plan borrado.");
+      if (d.renombrar) {
+        const p = S.personas.find((x) => x.id === d.renombrar);
+        const nombre = prompt("Nuevo nombre", p.nombre)?.trim();
+        if (nombre && nombre !== p.nombre) return hacer(() => q(sb.from("personas").update({ nombre }).eq("id", p.id)), "Nombre actualizado.");
+      }
+      if (d.borrarPersona && confirm("¿Borrar esta persona? Se quitará de todos los planes.")) {
+        return hacer(() => q(sb.from("personas").delete().eq("id", d.borrarPersona)), "Persona borrada.");
+      }
+      if (d.borrarEncuesta && confirm("¿Borrar esta encuesta y sus votos?")) {
+        return hacer(() => q(sb.from("encuestas").delete().eq("id", d.borrarEncuesta)), "Encuesta borrada.");
       }
     });
   }
 
-  async function iniciar() {
-    [S.config, S.personas, S.planes, S.encuestas, S.votos] = await Promise.all([
-      cargar("config", {}), cargar("personas", []), cargar("planes", []), cargar("encuestas", []), cargar("votos", {}),
-    ]);
-    if (S.config.repo) $("#link-repo").href = `https://github.com/${S.config.repo}`;
-    eventos();
-    pintarTodo();
-  }
-
-  iniciar();
+  // ---------- Inicio ----------
+  eventos();
+  let ultimaSesion;
+  sb.auth.onAuthStateChange((evento, session) => {
+    const id = session?.user?.id ?? null;
+    if (id === ultimaSesion && evento !== "INITIAL_SESSION") return;
+    ultimaSesion = id;
+    if (evento === "SIGNED_IN" && $("#dlg-login").open) $("#dlg-login").close();
+    setTimeout(() => actualizarSesion(session), 0);
+  });
 })();

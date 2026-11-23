@@ -10,13 +10,13 @@
 <body>
   <header class="top">
     <div class="marca">BMSN</div>
-    <nav class="tabs" role="tablist">
+    <nav class="tabs">
       <button class="tab activa" data-tab="resumen">Resumen</button>
       <button class="tab" data-tab="planes">Planes</button>
       <button class="tab" data-tab="personas">Personas</button>
       <button class="tab" data-tab="encuestas">Encuestas</button>
-      <button class="tab" data-tab="ayuda">Cómo funciona</button>
     </nav>
+    <div class="sesion" id="sesion"></div>
   </header>
 
   <main>
@@ -26,9 +26,7 @@
     <section id="resumen" class="panel activo">
       <div class="fila-titulo">
         <h1>Promedios</h1>
-        <label class="filtro">Periodo
-          <select id="filtro-periodo"></select>
-        </label>
+        <label class="filtro">Periodo <select id="filtro-periodo"></select></label>
       </div>
       <div class="kpis" id="kpis"></div>
       <div class="tabla-wrap">
@@ -46,28 +44,32 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="nota">% asistencia = planes a los que fue ÷ planes del periodo. % casa = veces que puso casa ÷ planes a los que fue. Prom. por mes = asistencias ÷ meses con planes.</p>
+      <p class="nota">% asistencia = planes a los que fue ÷ planes del periodo · % casa = veces que puso casa ÷ planes a los que fue · Prom. por mes = asistencias ÷ meses con planes.</p>
     </section>
 
     <!-- PLANES -->
     <section id="planes" class="panel">
       <h1>Planes</h1>
-      <details class="caja" id="caja-plan">
-        <summary>➕ Anotar un plan</summary>
+      <details class="caja solo-admin" id="caja-plan">
+        <summary id="titulo-form-plan">➕ Anotar un plan</summary>
         <form id="form-plan" class="form">
+          <input type="hidden" name="id">
           <div class="grid2">
             <label>Fecha<input type="date" name="fecha" required></label>
             <label>Nombre del plan<input type="text" name="titulo" maxlength="80" placeholder="Asado, cumpleaños, peli…" required></label>
           </div>
           <label>¿Quién puso casa?
-            <select name="anfitrion"><option value="">— Nadie / fuera de casa —</option></select>
+            <select name="anfitrion"></select>
           </label>
           <fieldset>
             <legend>¿Quién asistió?</legend>
             <div class="chips" id="chips-asistentes"></div>
           </fieldset>
           <label>Notas (opcional)<input type="text" name="notas" maxlength="200"></label>
-          <button class="btn" type="submit">Enviar a GitHub</button>
+          <div class="botones">
+            <button class="btn" type="submit">Guardar plan</button>
+            <button class="btn sec" type="button" id="cancelar-plan" hidden>Cancelar edición</button>
+          </div>
         </form>
       </details>
       <div id="lista-planes" class="lista"></div>
@@ -76,24 +78,18 @@
     <!-- PERSONAS -->
     <section id="personas" class="panel">
       <h1>Personas</h1>
-      <details class="caja">
-        <summary>➕ Añadir persona</summary>
-        <form id="form-persona" class="form">
-          <div class="grid2">
-            <label>Nombre<input type="text" name="nombre" maxlength="40" required></label>
-            <label>Usuario de GitHub (para poder votar)<input type="text" name="github" maxlength="39" placeholder="opcional"></label>
-          </div>
-          <button class="btn" type="submit">Enviar a GitHub</button>
-        </form>
-      </details>
+      <form id="form-persona" class="caja form-linea solo-admin">
+        <input type="text" name="nombre" maxlength="40" placeholder="Nombre de la persona" required>
+        <button class="btn" type="submit">Añadir</button>
+      </form>
       <div id="lista-personas" class="lista"></div>
     </section>
 
     <!-- ENCUESTAS -->
     <section id="encuestas" class="panel">
       <h1>Encuestas mensuales</h1>
-      <details class="caja">
-        <summary>➕ Crear encuesta del mes (admins)</summary>
+      <details class="caja solo-admin">
+        <summary>➕ Crear encuesta</summary>
         <form id="form-encuesta" class="form">
           <div class="grid2">
             <label>Mes<input type="month" name="mes" required></label>
@@ -101,32 +97,36 @@
           </div>
           <label class="check"><input type="checkbox" name="usarPersonas"> Usar las personas como opciones</label>
           <label>Opciones (una por línea)<textarea name="opciones" rows="4" placeholder="Opción A&#10;Opción B"></textarea></label>
-          <button class="btn" type="submit">Enviar a GitHub</button>
+          <button class="btn" type="submit">Crear encuesta</button>
         </form>
       </details>
+      <p class="nota">Para votar hay que entrar con un correo (Gmail o cualquiera). Llega un código para verificarlo. Un voto por correo y encuesta; si vuelves a votar, cambia tu voto.</p>
       <div id="lista-encuestas" class="lista"></div>
-    </section>
-
-    <!-- AYUDA -->
-    <section id="ayuda" class="panel">
-      <h1>Cómo funciona</h1>
-      <div class="caja texto">
-        <p><strong>Todo vive en GitHub.</strong> Los datos están en la carpeta <code>data/</code> del repositorio. Cuando anotas un plan, añades una persona, creas una encuesta o votas, esta página abre un <em>issue</em> de GitHub ya rellenado. Solo tienes que pulsar <strong>Submit new issue</strong>.</p>
-        <p>Una GitHub Action lee el issue, comprueba quién lo envía, guarda el cambio en <code>data/</code>, responde en el issue y lo cierra. En uno o dos minutos la página se actualiza.</p>
-        <h3>Votos verificados</h3>
-        <ul>
-          <li>Cada voto sale de una cuenta de GitHub. GitHub solo deja abrir issues a cuentas con el <strong>correo electrónico verificado</strong>.</li>
-          <li>Además, solo cuentan los votos de usuarios de GitHub registrados en <em>Personas</em>.</li>
-          <li>Un voto por cuenta y por encuesta. Si vuelves a votar, se reemplaza tu voto anterior.</li>
-          <li>Solo se aceptan votos durante el mes de la encuesta.</li>
-        </ul>
-        <h3>Permisos</h3>
-        <p>Anotar planes, personas y encuestas está reservado a los admins definidos en <code>data/config.json</code> (y al dueño del repositorio).</p>
-      </div>
     </section>
   </main>
 
-  <footer class="pie">BMSN · <a id="link-repo" href="#" target="_blank" rel="noopener">repositorio</a></footer>
+  <!-- LOGIN -->
+  <dialog id="dlg-login" class="dialogo">
+    <form method="dialog" class="cerrar-x"><button aria-label="Cerrar">✕</button></form>
+    <h2>Entrar con tu correo</h2>
+    <form id="form-email" class="form">
+      <label>Correo electrónico<input type="email" name="email" required autocomplete="email" placeholder="tucorreo@gmail.com"></label>
+      <button class="btn" type="submit">Enviarme el código</button>
+    </form>
+    <form id="form-codigo" class="form" hidden>
+      <p class="nota" id="txt-codigo"></p>
+      <label>Código de verificación<input type="text" name="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required></label>
+      <div class="botones">
+        <button class="btn" type="submit">Verificar</button>
+        <button class="btn sec" type="button" id="otro-correo">Usar otro correo</button>
+      </div>
+    </form>
+    <p class="error" id="err-login"></p>
+  </dialog>
+
+  <footer class="pie">BMSN</footer>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

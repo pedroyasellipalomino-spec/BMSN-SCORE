@@ -3,9 +3,6 @@ name: Publicar BMSN
 on:
   push:
     branches: [main]
-  workflow_run:
-    workflows: ["Procesar BMSN"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -25,11 +22,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
+      - name: Preparar sitio
+        run: mkdir _site && cp index.html app.js styles.css config.js _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
-        with:
-          path: .
       - id: deployment
         uses: actions/deploy-pages@v4
