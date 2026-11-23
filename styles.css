@@ -523,3 +523,89 @@ button.ev:hover .tx { color: var(--neon); }
 .col { width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; background: hsl(var(--h) 85% 62%); }
 .col.on { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--ink); }
 #f-perfil .perfil-cab .input-grande { font-size: 34px; }
+
+/* ---------- Acceso admin ---------- */
+.top-der { display: flex; align-items: center; gap: 8px; }
+.btn-admin-top {
+  display: none; width: 38px; height: 38px; border-radius: 50%; place-items: center;
+  background: var(--soft); border: 1px solid var(--line); color: var(--neon);
+}
+.btn-admin-top svg { width: 19px; height: 19px; }
+body.es-admin .btn-admin-top { display: grid; }
+.nav-admin { display: none !important; }
+@media (min-width: 1024px) {
+  body.es-admin .nav-admin { display: flex !important; }
+  body.es-admin .btn-admin-top { display: none; }
+}
+
+/* ---------- Fotos ---------- */
+.av.foto { background-size: cover; background-position: center; background-color: var(--soft); }
+.foto-acc { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---------- Calendario ---------- */
+.titulo-vista .seg { flex: none; }
+.cal-cab { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.cal-mes { font-family: var(--serif); text-transform: uppercase; font-size: 24px; letter-spacing: .02em; min-width: 150px; }
+.ver-como { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.ver-como select { width: auto; max-width: 190px; padding: 8px 12px; font-size: 14px; border-radius: 999px; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.cal-resumen { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; color: var(--ink-2); }
+.cal-resumen b { color: var(--ink); }
+.cal-resumen .neon { color: var(--neon); font-size: 17px; }
+.cal-resumen .naranja { color: var(--accent); font-size: 17px; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-sem { text-align: center; font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--muted); padding: 4px 0; }
+.dia {
+  position: relative; aspect-ratio: 1; border-radius: 12px; border: 1px solid transparent; background: var(--surface);
+  color: var(--ink-2); cursor: pointer; padding: 0; display: grid; place-items: center; font-weight: 600; font-size: 14px;
+}
+.dia.vacio-dia { background: none; cursor: default; }
+.dia .num { position: absolute; top: 6px; left: 8px; font-size: 12px; }
+.dia .mk { font-size: 15px; margin-top: 8px; }
+.dia .pt { width: 8px; height: 8px; border-radius: 50%; background: var(--neon); margin-top: 8px; }
+.dia .cnt { position: absolute; top: 4px; right: 5px; font-size: 10px; background: var(--ink); color: var(--bg); border-radius: 999px; padding: 0 5px; font-weight: 700; }
+.dia.plan { border-color: rgb(200 255 46 / .5); }
+.dia.fue { background: var(--neon); color: var(--on-neon); }
+.dia.fue .mk { font-weight: 800; }
+.dia.casa { background: var(--accent); color: var(--on-accent); }
+.dia.falto { border-color: #3a3a40; background: transparent; color: var(--muted); }
+.dia.falto .mk { font-size: 12px; opacity: .7; }
+.dia.hoy { box-shadow: inset 0 0 0 2px var(--ink); }
+.dia.sel { outline: 2px solid var(--neon); outline-offset: 2px; }
+.dia.fue.sel, .dia.casa.sel { outline-color: var(--ink); }
+@media (hover: hover) { .dia:not(.vacio-dia):hover { border-color: var(--ink-2); } }
+.leyenda { display: flex; flex-wrap: wrap; gap: 14px; margin: 14px 0 6px; font-size: 12px; color: var(--muted); }
+.leyenda span { display: inline-flex; align-items: center; gap: 6px; }
+.lg { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+.lg.fue { background: var(--neon); } .lg.casa { background: var(--accent); }
+.lg.falto { border: 1px solid #4a4a50; } .lg.plan { border: 1px solid var(--neon); }
+.lg.hoy { box-shadow: inset 0 0 0 2px var(--ink); background: var(--surface); }
+.cal-detalle { margin-top: 18px; }
+.cal-detalle .plan { margin-bottom: 10px; }
+.cal-pista { padding: 20px 0; }
+.estado-plan { display: inline-block; margin-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; }
+.estado-plan.fue { background: rgb(200 255 46 / .14); color: var(--neon); }
+.estado-plan.casa { background: var(--accent-soft); color: var(--accent); }
+.estado-plan.falto { background: var(--soft); color: var(--muted); }
+@media (min-width: 700px) { .dia { font-size: 15px; } .dia .num { font-size: 13px; } .dia .mk { font-size: 20px; } }
+@media (min-width: 1024px) {
+  .cal-wrap { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 32px; align-items: start; }
+  .cal-detalle { margin-top: 0; position: sticky; top: 92px; }
+  .cal { gap: 8px; }
+}
+
+/* ---------- Panel de admin ---------- */
+.admin-stats { margin-bottom: 4px; }
+.acciones-admin { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.accion {
+  display: flex; align-items: center; gap: 12px; padding: 16px; border-radius: var(--r); cursor: pointer; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 13px;
+}
+.accion .ai { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--neon); color: var(--on-neon); font-size: 17px; flex: none; }
+@media (hover: hover) { .accion:hover { border-color: var(--neon); } }
+.estado-cuenta { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--soft); color: var(--muted); font-weight: 800; flex: none; }
+.estado-cuenta.si { background: var(--neon); color: var(--on-neon); }
+.form-linea { display: flex; gap: 8px; }
+.form-linea input { flex: 1; min-width: 0; }
+@media (min-width: 700px) { .acciones-admin { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .admin-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; align-items: start; } }
+.flechas .lbl.cal-mes { text-transform: uppercase; }

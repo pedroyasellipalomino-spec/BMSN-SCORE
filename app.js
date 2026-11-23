@@ -20,7 +20,11 @@
   const iniciales = (n) => n.trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
   const tono = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
   const hue = (p) => (Number.isInteger(p.color) ? p.color : tono(p.nombre));
-  const avatar = (p, cls = "") => (p ? `<span class="av ${cls} ${p.emoji ? "emoji" : ""}" style="--h:${hue(p)}">${p.emoji ? esc(p.emoji) : esc(iniciales(p.nombre))}</span>` : "");
+  const avatar = (p, cls = "") => {
+    if (!p) return "";
+    if (p.foto) return `<span class="av ${cls} foto" style="--h:${hue(p)};background-image:url('${esc(p.foto.replace(/'/g, "%27"))}')" role="img" aria-label="${esc(p.nombre)}"></span>`;
+    return `<span class="av ${cls} ${p.emoji ? "emoji" : ""}" style="--h:${hue(p)}">${p.emoji ? esc(p.emoji) : esc(iniciales(p.nombre))}</span>`;
+  };
   const EMOJIS = ["😎", "🔥", "🍻", "🍕", "🎮", "⚽", "🎸", "🎧", "🌮", "🍷", "🏀", "🎲", "🦁", "🐺", "🦊", "🐸", "👑", "💀", "🚀", "🌈", "⚡", "🍀", "🎯", "🃏"];
   const COLORES = [80, 140, 180, 210, 260, 300, 340, 15, 40];
   const ICON = {
@@ -42,6 +46,9 @@
     if (/permission denied/i.test(m)) return "Sin permiso en la base de datos (faltan los GRANT del esquema).";
     if (/duplicate key.*nombre/i.test(m)) return "Ya existe alguien con ese nombre.";
     if (/rate limit/i.test(m)) return "Demasiados correos seguidos. Espera unos minutos.";
+    if (/bucket not found/i.test(m)) return "Las fotos aún no están activadas (falta 03_fotos_admin.sql).";
+    if (/row-level security|unauthorized/i.test(m)) return "No tienes permiso para hacer esto.";
+    if (/duplicate key.*admins/i.test(m)) return "Ese correo ya es admin.";
     return m;
   };
 
@@ -51,6 +58,7 @@
     user: null, admin: false, cargado: false, errorCarga: null,
     periodo: { tipo: "anio", valor: hoy().slice(0, 4) },
     metrica: "asistencia",
+    vistaPlanes: "cal", calMes: null, calPersona: undefined, calDia: null,
   };
 
   // ---------- Capa de datos ----------
@@ -64,10 +72,14 @@
     const q = async (p) => { const { data, error } = await p; if (error) throw error; return data; };
     return {
       async cargar() {
-        let migracion = true;
-        const personasQ = sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado").order("nombre").then(async (r) => {
-          if (r.error?.code === "42703") { migracion = false; return sb.from("personas").select("id,nombre").order("nombre"); }
-          return r;
+        let migracion = true, fotos = true;
+        const personasQ = sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado,foto").order("nombre").then(async (r) => {
+          if (r.error?.code !== "42703") return r;
+          fotos = false;
+          r = await sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado").order("nombre");
+          if (r.error?.code !== "42703") return r;
+          migracion = false;
+          return sb.from("personas").select("id,nombre").order("nombre");
         });
         const opcional = (p) => p.then((r) => r.data || []);
         const [personas, planes, asist, encuestas, resultados, participacion, admins] = await Promise.all([
@@ -80,7 +92,8 @@
           opcional(sb.rpc("personas_admin")),
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion };
+        const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email) };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -91,6 +104,16 @@
         ? q(sb.rpc("editar_perfil", { p_nombre: d.nombre, p_bio: d.bio, p_emoji: d.emoji, p_color: d.color }))
         : q(sb.from("personas").update({ nombre: d.nombre, bio: d.bio, emoji: d.emoji, color: d.color }).eq("id", id)),
       desvincular: (id) => q(sb.rpc("desvincular", { p_persona: id })),
+      async subirFoto(id, blob) {
+        const ruta = `${id}.jpg`;
+        const { error } = await sb.storage.from("avatares").upload(ruta, blob, { upsert: true, contentType: "image/jpeg", cacheControl: "3600" });
+        if (error) throw error;
+        const url = sb.storage.from("avatares").getPublicUrl(ruta).data.publicUrl + "?v=" + Date.now();
+        await q(sb.rpc("poner_foto", { p_persona: id, p_url: url }));
+      },
+      quitarFoto: (id) => q(sb.rpc("poner_foto", { p_persona: id, p_url: null })),
+      agregarAdmin: (email) => q(sb.from("admins").insert({ email: email.toLowerCase() })),
+      quitarAdmin: (email) => q(sb.from("admins").delete().eq("email", email)),
       borrarPersona: (id) => q(sb.from("personas").delete().eq("id", id)),
       crearEncuesta: (e) => q(sb.from("encuestas").insert(e)),
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
@@ -122,6 +145,7 @@
     const votos = { e1: { Asado: 4, Karaoke: 2, "Noche de pelis": 1 }, e2: { Ana: 3, Luis: 5, Camila: 2 } };
     const mio = {};
     let user = null, listener = () => {};
+    const emailsAdmin = [];
     const pausa = () => new Promise((r) => setTimeout(r, 120));
     return {
       async cargar() {
@@ -134,7 +158,7 @@
           votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o.opcion, fecha: o.fecha })) : [],
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true,
+          migracion: true, fotos: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => true,
@@ -159,6 +183,10 @@
       },
       async editarPerfil(id, d) { Object.assign(personas.find((p) => p.id === id), d); },
       async desvincular(id) { Object.assign(personas.find((p) => p.id === id), { user_id: null, vinculado: null }); },
+      async subirFoto(id, blob) { personas.find((p) => p.id === id).foto = URL.createObjectURL(blob); },
+      async quitarFoto(id) { personas.find((p) => p.id === id).foto = null; },
+      async agregarAdmin(email) { emailsAdmin.push(email.toLowerCase()); },
+      async quitarAdmin(email) { emailsAdmin.splice(emailsAdmin.indexOf(email), 1); },
       async borrarPersona(id) { personas.splice(personas.findIndex((x) => x.id === id), 1); },
       async crearEncuesta(e) { const id = uid(); encuestas.unshift({ id, ...e }); votos[id] = {}; },
       async borrarEncuesta(id) { encuestas.splice(encuestas.findIndex((x) => x.id === id), 1); },
@@ -189,6 +217,8 @@
       S.participacion = Object.fromEntries((d.participacion || []).map((x) => [x.persona_id, Number(x.votos)]));
       S.adminIds = new Set(d.admins || []);
       S.migracion = d.migracion !== false;
+      S.fotos = d.fotos !== false;
+      S.emailsAdmin = d.emailsAdmin || [];
       S.yo = S.user ? S.personas.find((p) => p.user_id && p.user_id === S.user.id) || null : null;
       S.votosAdmin = S.admin ? d.votos : [];
       S.errorCarga = null;
@@ -237,7 +267,10 @@
   }
 
   // ---------- Vistas ----------
-  const vistaActual = () => (location.hash.slice(1).match(/^(inicio|planes|encuestas|gente)$/) || ["inicio"])[0];
+  const vistaActual = () => {
+    const v = (location.hash.slice(1).match(/^(inicio|planes|encuestas|gente|admin)$/) || ["inicio"])[0];
+    return v === "admin" && !S.admin ? "inicio" : v;
+  };
 
   function render() {
     const v = vistaActual();
@@ -249,7 +282,8 @@
     const demo = DEMO ? `<div class="banner"><span>Modo demo: datos inventados, nada se guarda.</span></div>` : "";
     const mig = !S.migracion && S.admin ? bannerError("Falta activar los perfiles: ejecuta <b>supabase/02_perfiles.sql</b> en Supabase.") : "";
     const sinPerfil = S.user && S.migracion && !S.yo && S.cargado ? `<div class="banner"><span>Tu correo aún no está unido a tu perfil.</span><button class="btn chico" data-a="quien-soy">¿Quién eres?</button></div>` : "";
-    $("#vista").innerHTML = demo + mig + err + sinPerfil + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente }[v]();
+    $("#vista").innerHTML = demo + mig + err + sinPerfil + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
+    document.body.classList.toggle("es-admin", S.admin);
   }
 
   const bannerError = (m) => `<div class="banner error">${m}</div>`;
@@ -349,7 +383,9 @@
   }
 
   function vPlanes() {
-    const head = `<div class="titulo-vista"><h1 class="h2">Planes</h1><span class="sub">${S.planes.length} en total</span></div>`;
+    const head = `<div class="titulo-vista"><h1 class="h2">Planes</h1>
+      <div class="seg">${[["cal", "Calendario"], ["lista", "Lista"]].map(([k, l]) => `<button class="${S.vistaPlanes === k ? "on" : ""}" data-a="vista-planes" data-v="${k}">${l}</button>`).join("")}</div></div>`;
+    if (S.vistaPlanes === "cal") return head + vCalendario();
     if (!S.planes.length) {
       return head + bannerSesion("Entra con tu correo para anotar planes.") + `<div class="vacio">
         <p>Todavía no hay planes anotados.</p>
@@ -359,18 +395,136 @@
     S.planes.forEach((p) => (grupos[p.fecha.slice(0, 7)] ??= []).push(p));
     return head + Object.entries(grupos).map(([m, ps]) => `
       <div class="mes-cab"><span>${nombreMes(m)}</span><span>${ps.length}</span></div>
-      <div class="rejilla">${ps.map((p) => {
-        const anf = persona(p.anfitrion);
-        const gente = p.asistentes.map(persona).filter(Boolean);
-        return `<button class="plan" data-a="ver-plan" data-id="${p.id}">
-          <span class="fecha-bloque"><b>${+p.fecha.slice(8)}</b><span>${diaSemana(p.fecha)}</span></span>
-          <span class="cuerpo">
-            <div class="tit">${esc(p.titulo)}</div>
-            <div class="casa">${anf ? `en casa de <em>${esc(anf.nombre)}</em>` : "fuera de casa"} · ${gente.length} personas</div>
-            <div class="pila">${gente.slice(0, 6).map((g) => avatar(g, "sm")).join("")}${gente.length > 6 ? `<span class="av sm mas">+${gente.length - 6}</span>` : ""}</div>
-          </span>
-        </button>`;
-      }).join("")}</div>`).join("");
+      <div class="rejilla">${ps.map((p) => tarjetaPlan(p, S.yo?.id)).join("")}</div>`).join("");
+  }
+
+
+  // ---------- Calendario ----------
+  function vCalendario() {
+    const mes = S.calMes || mesActual();
+    const [y, m] = mes.split("-").map(Number);
+    const pid = S.calPersona === undefined ? S.yo?.id ?? null : S.calPersona;
+    const quien = pid ? persona(pid) : null;
+    const delMes = S.planes.filter((p) => p.fecha.startsWith(mes));
+    const porDia = {};
+    delMes.forEach((p) => (porDia[p.fecha] ??= []).push(p));
+    const fue = quien ? delMes.filter((p) => p.asistentes.includes(pid)).length : 0;
+    const casa = quien ? delMes.filter((p) => p.anfitrion === pid).length : 0;
+
+    const primero = new Date(Date.UTC(y, m - 1, 1));
+    const offset = (primero.getUTCDay() + 6) % 7; // lunes primero
+    const dias = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const celdas = [];
+    for (let i = 0; i < offset; i++) celdas.push(`<span class="dia vacio-dia"></span>`);
+    for (let d = 1; d <= dias; d++) {
+      const f = `${mes}-${String(d).padStart(2, "0")}`;
+      const ps = porDia[f] || [];
+      let cls = "", marca = "";
+      if (ps.length) {
+        if (!quien) cls = "plan";
+        else if (ps.some((p) => p.anfitrion === pid)) { cls = "casa"; marca = "🏠"; }
+        else if (ps.some((p) => p.asistentes.includes(pid))) { cls = "fue"; marca = "✓"; }
+        else { cls = "falto"; marca = "✕"; }
+      }
+      celdas.push(`<button class="dia ${cls} ${f === hoy() ? "hoy" : ""} ${f === S.calDia ? "sel" : ""}" data-a="cal-dia" data-v="${f}" aria-label="${d} de ${MESES[m - 1]}${ps.length ? `, ${ps.length} plan` : ""}">
+        <span class="num">${d}</span>${marca ? `<span class="mk">${marca}</span>` : ps.length ? `<span class="pt"></span>` : ""}${ps.length > 1 ? `<span class="cnt">${ps.length}</span>` : ""}</button>`);
+    }
+
+    const dia = S.calDia && S.calDia.startsWith(mes) ? S.calDia : null;
+    const planesDia = dia ? porDia[dia] || [] : [];
+    const opciones = [`<option value="">Todo el grupo</option>`, ...S.personas.map((p) => `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc(p.nombre)}${S.yo?.id === p.id ? " (tú)" : ""}</option>`)].join("");
+
+    return `<div class="cal-wrap"><div class="cal-col">
+      <div class="cal-cab">
+        <div class="flechas"><button data-a="cal-mover" data-v="-1" aria-label="Mes anterior">${ICON.izq}</button>
+          <span class="lbl cal-mes">${MESES[m - 1]} ${y}</span>
+          <button data-a="cal-mover" data-v="1" aria-label="Mes siguiente">${ICON.der}</button></div>
+        <label class="ver-como"><span>Ver como</span><select id="cal-persona">${opciones}</select></label>
+      </div>
+      <div class="cal-resumen">
+        ${quien ? `${avatar(quien, "sm")}<span><b>${esc(quien.nombre)}</b> fue a <b class="neon">${fue}</b> de ${delMes.length} plan${delMes.length === 1 ? "" : "es"}${casa ? ` · puso casa <b class="naranja">${casa}</b>` : ""}</span>`
+          : `<span><b class="neon">${delMes.length}</b> plan${delMes.length === 1 ? "" : "es"} en ${MESES[m - 1]}</span>`}
+      </div>
+      <div class="cal">
+        ${["L", "M", "X", "J", "V", "S", "D"].map((d) => `<span class="cal-sem">${d}</span>`).join("")}
+        ${celdas.join("")}
+      </div>
+      <div class="leyenda">${quien ? `<span><i class="lg fue"></i>Fue</span><span><i class="lg casa"></i>Puso casa</span><span><i class="lg falto"></i>No fue</span>` : `<span><i class="lg plan"></i>Hubo plan</span>`}<span><i class="lg hoy"></i>Hoy</span></div>
+      </div>
+      <div class="cal-col cal-detalle">
+        ${dia ? `<div class="mes-cab" style="margin-top:0"><span>${diaSemana(dia)} ${+dia.slice(8)} de ${MESES[+dia.slice(5, 7) - 1]}</span><span>${planesDia.length || ""}</span></div>
+          ${planesDia.length ? planesDia.map((p) => tarjetaPlan(p, pid)).join("") : `<div class="vacio" style="padding:24px 0"><p>No hubo plan este día.</p></div>`}
+          ${S.admin ? `<button class="btn ${planesDia.length ? "sec" : ""} full" data-a="nuevo-plan-dia" data-v="${dia}">＋ Anotar plan este día</button>` : ""}`
+        : `<div class="vacio cal-pista"><p>Toca un día para ver sus planes.</p></div>`}
+      </div></div>`;
+  }
+
+  function tarjetaPlan(p, pid = null) {
+    const anf = persona(p.anfitrion);
+    const gente = p.asistentes.map(persona).filter(Boolean);
+    const estado = !pid ? "" : p.anfitrion === pid ? `<span class="estado-plan casa">🏠 Puso casa</span>` : p.asistentes.includes(pid) ? `<span class="estado-plan fue">✓ Fue</span>` : `<span class="estado-plan falto">✕ No fue</span>`;
+    return `<button class="plan" data-a="ver-plan" data-id="${p.id}">
+      <span class="fecha-bloque"><b>${+p.fecha.slice(8)}</b><span>${diaSemana(p.fecha)}</span></span>
+      <span class="cuerpo">
+        <div class="tit">${esc(p.titulo)}</div>
+        <div class="casa">${anf ? `en casa de <em>${esc(anf.nombre)}</em>` : "fuera de casa"} · ${gente.length} personas</div>
+        <div class="pila">${gente.slice(0, 6).map((g) => avatar(g, "sm")).join("")}${gente.length > 6 ? `<span class="av sm mas">+${gente.length - 6}</span>` : ""}</div>
+        ${estado}
+      </span>
+    </button>`;
+  }
+
+  // ---------- Panel de admin ----------
+  function vAdmin() {
+    const conCuenta = S.personas.filter((p) => p.user_id);
+    const sinCuenta = S.personas.filter((p) => !p.user_id);
+    const yoEmail = S.user?.email?.toLowerCase();
+    return `<div class="titulo-vista"><h1 class="h2">Panel de admin</h1><span class="insignia">Admin</span></div>
+      ${!S.migracion ? bannerError("Falta ejecutar <b>supabase/02_perfiles.sql</b> en Supabase.") : !S.fotos ? `<div class="banner"><span>Para activar las fotos de perfil ejecuta <b>supabase/03_fotos_admin.sql</b> en Supabase.</span></div>` : ""}
+      <div class="stats admin-stats">
+        <div class="stat"><b>${S.personas.length}</b><span>personas</span></div>
+        <div class="stat"><b>${conCuenta.length}</b><span>con cuenta</span></div>
+        <div class="stat"><b>${S.planes.length}</b><span>planes</span></div>
+        <div class="stat"><b>${S.encuestas.length}</b><span>encuestas</span></div>
+      </div>
+      <div class="seccion"><div class="cab"><span class="eyebrow">Acciones rápidas</span></div>
+        <div class="acciones-admin">
+          <button class="accion" data-a="nuevo-plan"><span class="ai">＋</span>Anotar plan</button>
+          <button class="accion" data-a="nueva-persona"><span class="ai">👤</span>Añadir personas</button>
+          <button class="accion" data-a="nueva-encuesta"><span class="ai">☑</span>Nueva encuesta</button>
+          <button class="accion" data-a="csv"><span class="ai">⬇</span>Descargar datos</button>
+        </div></div>
+      <div class="admin-grid">
+        <div class="seccion"><div class="cab"><span class="eyebrow">Cuentas · ${conCuenta.length} de ${S.personas.length}</span></div>
+          <p class="sub" style="margin:-4px 0 12px">Cuando alguien entra con su correo y elige su nombre, su perfil queda unido a su cuenta.</p>
+          <div class="lista">${[...conCuenta, ...sinCuenta].map((p) => `<button class="fila" data-a="perfil" data-id="${p.id}">${avatar(p)}
+            <span class="cuerpo"><div class="nom">${esc(p.nombre)}${insignias(p, true)}</div>
+            <div class="det">${p.user_id ? `Con cuenta desde ${p.vinculado ? fechaCorta(p.vinculado.slice(0, 10)) : "—"}` : "Sin cuenta todavía"}</div></span>
+            <span class="estado-cuenta ${p.user_id ? "si" : ""}">${p.user_id ? "✓" : "—"}</span></button>`).join("") || `<div class="vacio"><p>Aún no hay personas.</p></div>`}</div>
+        </div>
+        <div class="seccion"><div class="cab"><span class="eyebrow">Admins</span></div>
+          <div class="lista">${S.emailsAdmin.map((e) => `<div class="fila"><span class="cuerpo"><div class="nom" style="text-transform:none">${esc(e)}</div>
+            <div class="det">${e === yoEmail ? "Tú" : "Admin"}</div></span>
+            ${e !== yoEmail ? `<button class="btn peligro chico" data-a="quitar-admin" data-v="${esc(e)}">Quitar</button>` : ""}</div>`).join("")}</div>
+          <form id="f-admin" class="form-linea" style="margin-top:12px" autocomplete="off">
+            <input type="email" name="email" placeholder="correo@gmail.com" required>
+            <button class="btn chico" type="submit">Hacer admin</button>
+          </form>
+          <p class="sub" style="font-size:12.5px;margin-top:8px">Esa persona podrá anotar planes, gente y encuestas.</p>
+        </div>
+      </div>`;
+  }
+
+  function descargarCSV() {
+    const c = (t) => `"${String(t ?? "").replace(/"/g, '""')}"`;
+    const filas = [["fecha", "plan", "puso casa", "asistentes", "nº asistentes", "notas"].map(c).join(",")];
+    [...S.planes].sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach((p) => {
+      filas.push([p.fecha, p.titulo, persona(p.anfitrion)?.nombre || "", p.asistentes.map((x) => persona(x)?.nombre).filter(Boolean).join("; "), p.asistentes.length, p.notas].map(c).join(","));
+    });
+    const blob = new Blob(["﻿" + filas.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `bmsn-planes-${hoy()}.csv` });
+    document.body.append(a); a.click(); a.remove();
+    toast("Descargado");
   }
 
   function conteo(e) {
@@ -472,6 +626,7 @@
       <div class="perfil-cab">${avatar({ nombre: S.user.email }, "xl")}<div><div class="h3">${esc(S.user.email)}</div>
       <div class="sub">${S.admin ? "Admin de BMSN" : "Miembro"} · sin perfil todavía</div></div></div>
       ${S.migracion ? `<button class="btn full" data-a="quien-soy">Elegir mi perfil</button><div style="height:10px"></div>` : ""}
+      ${S.admin ? `<button class="btn sec full" data-a="ir-admin">⚙ Panel de admin</button><div style="height:10px"></div>` : ""}
       <button class="btn linea full" data-a="salir">Cerrar sesión</button>`);
   }
 
@@ -544,21 +699,41 @@
         ${propio || S.admin ? `<button class="btn" data-a="editar-perfil" data-id="${id}">Editar perfil</button>` : ""}
         ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
       </div>
+      ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
       ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
         ${p.user_id ? `<button class="btn sec" data-a="desvincular" data-id="${id}">Soltar cuenta</button>` : ""}
         <button class="btn peligro" data-a="borrar-persona" data-id="${id}">Borrar</button></div>` : ""}`);
   }
 
+  // Recorta al centro y reduce a 480×480 JPEG antes de subir.
+  async function reducirImagen(file) {
+    if (!file.type.startsWith("image/")) throw new Error("Elige una imagen");
+    const img = await new Promise((ok, mal) => {
+      const i = new Image(); i.onload = () => ok(i); i.onerror = () => mal(new Error("No se pudo leer la imagen"));
+      i.src = URL.createObjectURL(file);
+    });
+    const lado = Math.min(img.naturalWidth, img.naturalHeight), T = 480;
+    const c = Object.assign(document.createElement("canvas"), { width: T, height: T });
+    c.getContext("2d").drawImage(img, (img.naturalWidth - lado) / 2, (img.naturalHeight - lado) / 2, lado, lado, 0, 0, T, T);
+    URL.revokeObjectURL(img.src);
+    return new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.85));
+  }
+
   let edicion = null;
   function hojaEditarPerfil(id) {
     const p = persona(id);
-    edicion ??= { id, nombre: p.nombre, bio: p.bio || "", emoji: p.emoji || "", color: Number.isInteger(p.color) ? p.color : null };
+    edicion ??= { id, nombre: p.nombre, bio: p.bio || "", emoji: p.emoji || "", color: Number.isInteger(p.color) ? p.color : null, foto: p.foto || null };
     const e = edicion;
-    const vista = { nombre: e.nombre || "?", emoji: e.emoji, color: e.color ?? tono(p.nombre) };
+    const vista = { nombre: e.nombre || "?", emoji: e.emoji, color: e.color ?? tono(p.nombre), foto: e.foto };
     abrirHoja(`${cabHoja(S.yo?.id === id ? "Tu perfil" : "Editar perfil")}
       <form id="f-perfil" autocomplete="off">
         <div class="perfil-cab">${avatar(vista, "xl")}<div style="flex:1;min-width:0">
           <input class="input-grande" name="nombre" maxlength="40" value="${esc(e.nombre)}" placeholder="Nombre" required></div></div>
+        ${S.fotos ? `<div class="campo"><span>Foto de perfil</span><div class="foto-acc">
+          <button type="button" class="btn sec chico" data-a="subir-foto">📷 ${e.foto ? "Cambiar foto" : "Subir foto"}</button>
+          ${e.foto ? `<button type="button" class="btn peligro chico" data-a="quitar-foto" data-id="${id}">Quitar</button>` : ""}
+          <input type="file" id="input-foto" accept="image/*" hidden></div>
+          <p class="ayuda" style="margin:8px 0 0">${e.foto ? "La foto se muestra en lugar del emoji." : "Si no subes foto, se usa el emoji o tus iniciales."}</p></div>` : ""}
         <label class="campo"><span>Tu frase</span><input name="bio" maxlength="140" value="${esc(e.bio)}" placeholder="Ej: el que siempre pone la música"></label>
         <div class="campo"><span>Avatar</span><div class="emojis">
           <button type="button" class="emo ${!e.emoji ? "on" : ""}" data-a="emo" data-v="">${esc(iniciales(e.nombre || "?"))}</button>
@@ -576,11 +751,11 @@
 
   // Formulario rápido de plan
   let borrador = null;
-  function nuevoBorrador(plan) {
+  function nuevoBorrador(plan, fecha) {
     const titulos = [...new Set(S.planes.map((p) => p.titulo))].slice(0, 6);
     borrador = plan
       ? { id: plan.id, titulo: plan.titulo, fecha: plan.fecha, notas: plan.notas || "", asistentes: new Set(plan.asistentes), anfitrion: plan.anfitrion, titulos }
-      : { id: null, titulo: "", fecha: hoy(), notas: "", asistentes: new Set(), anfitrion: null, titulos };
+      : { id: null, titulo: "", fecha: fecha || hoy(), notas: "", asistentes: new Set(), anfitrion: null, titulos };
   }
 
   function hojaPlan() {
@@ -741,6 +916,25 @@
     "nueva-persona-rapida": () => { guardarCampos(); hojaNuevaPersona(true); },
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
     "quien-soy": () => hojaQuienSoy(),
+    "vista-planes": (d) => { S.vistaPlanes = d.v; render(); },
+    "cal-mover": (d) => {
+      const [y, m] = (S.calMes || mesActual()).split("-").map(Number);
+      const t = new Date(Date.UTC(y, m - 1 + Number(d.v), 1));
+      S.calMes = t.toISOString().slice(0, 7); S.calDia = null; render();
+    },
+    "cal-dia": (d) => {
+      S.calDia = S.calDia === d.v ? null : d.v; render();
+      if (S.calDia && innerWidth < 1024) setTimeout(() => $(".cal-detalle")?.scrollIntoView({ behavior: "smooth", block: "start" }), 30);
+    },
+    "nuevo-plan-dia": (d) => {
+      if (!exigirAdmin("Entra con tu correo de admin para anotar planes.")) return;
+      nuevoBorrador(null, d.v); hojaPlan();
+    },
+    "ir-admin": () => { cerrarHoja(); location.hash = "#admin"; },
+    csv: () => descargarCSV(),
+    "quitar-admin": async (d) => { if (confirm(`¿Quitar a ${d.v} como admin?`)) await hacer(() => api.quitarAdmin(d.v), "Admin quitado"); },
+    "subir-foto": () => $("#input-foto")?.click(),
+    "quitar-foto": async (d) => { if (await hacer(() => api.quitarFoto(d.id), "Foto quitada")) { edicion.foto = null; repintarEdicion(); } },
     soy: async (d) => {
       const p = persona(d.id);
       if (!confirm(`¿Eres ${p.nombre}? Tu correo quedará unido a este perfil.`)) return;
@@ -802,7 +996,20 @@
     $("#quien-pista").innerHTML = !n ? "&nbsp;" : p ? (p.user_id ? "⚠️ Ese perfil ya pertenece a otra cuenta." : `✓ Te unirás al perfil de <b>${esc(p.nombre)}</b> con sus estadísticas.`) : "Se creará un perfil nuevo con ese nombre.";
   });
 
-  document.addEventListener("change", (ev) => {
+  document.addEventListener("change", async (ev) => {
+    if (ev.target.id === "cal-persona") { S.calPersona = ev.target.value || null; render(); return; }
+    if (ev.target.id === "input-foto" && ev.target.files[0]) {
+      const id = edicion?.id;
+      try {
+        toast("Subiendo foto…");
+        const blob = await reducirImagen(ev.target.files[0]);
+        await api.subirFoto(id, blob);
+        toast("Foto actualizada");
+        await cargar();
+        guardarEdicion(); edicion.foto = persona(id)?.foto; repintarEdicion();
+      } catch (e) { toast(msgError(e), true); }
+      return;
+    }
     if (ev.target.matches("#f-plan [name=fecha]") && ev.target.value) { guardarCampos(); borrador.fecha = ev.target.value; repintarPlan(); }
   });
 
@@ -836,6 +1043,13 @@
         $("#recien").insertAdjacentHTML("beforeend", `<span class="chip on">✓ ${esc(nombre)}</span>`);
       }
       btn.disabled = false; f.nombre.focus();
+    }
+    if (f.id === "f-admin") {
+      const email = f.email.value.trim().toLowerCase();
+      if (S.emailsAdmin.includes(email)) return toast("Ya es admin", true);
+      btn.disabled = true;
+      await hacer(() => api.agregarAdmin(email), `${email} ahora es admin`);
+      return;
     }
     if (f.id === "f-quien") {
       const nombre = f.nombre.value.trim().replace(/\s+/g, " ");
@@ -873,7 +1087,7 @@
     if (ev.metaKey || ev.ctrlKey || ev.altKey || hoja.open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
     const k = ev.key.toLowerCase();
     if (k === "n") { ev.preventDefault(); acciones["nuevo-plan"](); }
-    const rutas = { 1: "inicio", 2: "planes", 3: "encuestas", 4: "gente" };
+    const rutas = { 1: "inicio", 2: "planes", 3: "encuestas", 4: "gente", 5: "admin" };
     if (rutas[k]) location.hash = "#" + rutas[k];
   });
   $("#btn-cuenta").addEventListener("click", () => (S.user ? hojaCuenta() : hojaLogin()));
