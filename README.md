@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`.
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql` y `06_nominados.sql`.
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
@@ -19,6 +19,12 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - Cada correo que entra elige quién es: si escribe un nombre que ya existe, su cuenta se une a ese perfil con todas sus estadísticas; si no, se crea uno nuevo.
 - Cada miembro edita su propio perfil (nombre, emoji, color y frase). El admin puede editar cualquiera y soltar una cuenta de un perfil equivocado.
 - El perfil muestra asistencia, veces que puso casa, racha, encuestas votadas y el historial de actividad. Qué votó cada uno solo lo ve esa persona (y el admin).
+
+## Ganador del mes (encuestas en dos fases)
+
+1. **Fase 1 · Nominados**: cada miembro vota a varias personas (por defecto hasta 3).
+2. El admin pulsa **Cerrar nominados y crear la final**: los 3 más votados (con empates en el 3.º puesto incluidos) pasan a la final.
+3. **Fase 2 · Final**: un voto por persona. Al cerrarla se proclama al **🏆 Ganador del mes**, que aparece en Encuestas, en Inicio y como insignia en su perfil.
 
 ## Calendario y panel de admin
 

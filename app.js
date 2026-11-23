@@ -84,19 +84,21 @@
           return r;
         });
         const opcional = (p) => p.then((r) => r.data || []);
-        const [personas, planes, asist, encuestas, resultados, participacion, admins, claveGrupo] = await Promise.all([
+        const [personas, planes, asist, encuestas, resultados, participacion, admins, claveGrupo, votantes, nominados] = await Promise.all([
           q(personasQ),
           q(sb.from("planes").select("id,fecha,titulo,anfitrion,notas").order("fecha", { ascending: false }).order("creado", { ascending: false })),
           q(sb.from("asistencias").select("plan_id,persona_id")),
-          q(sb.from("encuestas").select("id,mes,pregunta,opciones,creado").order("mes", { ascending: false }).order("creado", { ascending: false })),
+          q(sb.from("encuestas").select("*").order("mes", { ascending: false }).order("creado", { ascending: false })),
           q(sb.rpc("resultados")),
           opcional(sb.rpc("participacion")),
           opcional(sb.rpc("personas_admin")),
           sb.rpc("clave_grupo_activa").then((r) => (r.error ? null : !!r.data)),
+          opcional(sb.rpc("votantes")),
+          sb.from("encuestas").select("tipo").limit(1).then((r) => !r.error),
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -121,6 +123,8 @@
       crearEncuesta: (e) => q(sb.from("encuestas").insert(e)),
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
+      votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
+      cerrarEncuesta: (id) => q(sb.from("encuestas").update({ cerrada: true }).eq("id", id)),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
       async entrarConCodigo(email, codigo) {
         const { error } = await sb.auth.verifyOtp({ email, token: codigo, type: "email" });
@@ -145,11 +149,15 @@
       van.forEach((p) => asist.push({ plan_id: id, persona_id: p.id }));
     }
     const m = mesActual(), ant = sumarDias(m + "-01", -1).slice(0, 7);
+    const nombresDemo = personas.map((p) => p.nombre).sort((a, b) => a.localeCompare(b));
     const encuestas = [
-      { id: "e1", mes: m, pregunta: "¿Cuál fue el mejor plan del mes?", opciones: ["Asado", "Karaoke", "Noche de pelis", "Playa"] },
-      { id: "e2", mes: ant, pregunta: "¿Quién fue el mejor anfitrión?", opciones: ["Ana", "Luis", "Camila"] },
+      { id: "n1", mes: m, tipo: "nominacion", max_votos: 3, cerrada: false, pregunta: `Nominados de ${MESES[+m.slice(5) - 1]}`, opciones: nombresDemo },
+      { id: "e1", mes: m, tipo: "simple", max_votos: 1, cerrada: false, pregunta: "¿Cuál fue el mejor plan del mes?", opciones: ["Asado", "Karaoke", "Noche de pelis", "Playa"] },
+      { id: "n0", mes: ant, tipo: "nominacion", max_votos: 3, cerrada: true, pregunta: `Nominados de ${MESES[+ant.slice(5) - 1]}`, opciones: nombresDemo },
+      { id: "f0", mes: ant, tipo: "final", max_votos: 1, cerrada: true, padre: "n0", pregunta: `¿Quién es el ganador de ${MESES[+ant.slice(5) - 1]}?`, opciones: ["Diego", "Luis", "Camila"] },
     ];
-    const votos = { e1: { Asado: 4, Karaoke: 2, "Noche de pelis": 1 }, e2: { Ana: 3, Luis: 5, Camila: 2 } };
+    const votos = { n1: { Ana: 4, Diego: 3, Luis: 3, Sofía: 2, Mateo: 1 }, e1: { Asado: 4, Karaoke: 2, "Noche de pelis": 1 },
+      n0: { Diego: 6, Luis: 5, Camila: 4, Ana: 2 }, f0: { Diego: 5, Luis: 3, Camila: 1 } };
     const mio = {};
     let user = null, listener = () => {};
     const emailsAdmin = [];
@@ -162,7 +170,8 @@
           planes: [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha)),
           asist: [...asist], encuestas: [...encuestas],
           resultados: Object.entries(votos).flatMap(([e, o]) => Object.entries(o).map(([opcion, n]) => ({ encuesta_id: e, opcion, votos: n }))),
-          votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o.opcion, fecha: o.fecha })) : [],
+          votos: user ? Object.entries(mio).flatMap(([e, o]) => o.opciones.map((opcion) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion, fecha: o.fecha }))) : [],
+          votantes: Object.entries(votos).map(([e, o]) => ({ encuesta_id: e, n: Math.max(0, ...Object.values(o)) + (mio[e] ? 1 : 0) })), nominados: true,
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
           migracion: true, fotos: true, claveGrupo: true, conDesde: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
@@ -195,14 +204,16 @@
       async agregarAdmin(email) { emailsAdmin.push(email.toLowerCase()); },
       async quitarAdmin(email) { emailsAdmin.splice(emailsAdmin.indexOf(email), 1); },
       async borrarPersona(id) { personas.splice(personas.findIndex((x) => x.id === id), 1); },
-      async crearEncuesta(e) { const id = uid(); encuestas.unshift({ id, ...e }); votos[id] = {}; },
+      async crearEncuesta(e) { const id = uid(); encuestas.unshift({ id, tipo: "simple", max_votos: 1, cerrada: false, ...e }); votos[id] = {}; },
       async borrarEncuesta(id) { encuestas.splice(encuestas.findIndex((x) => x.id === id), 1); },
-      async votar(id, opcion) {
+      async votarVarios(id, opciones) {
         votos[id] ??= {};
-        if (mio[id]) votos[id][mio[id].opcion]--;
-        votos[id][opcion] = (votos[id][opcion] || 0) + 1;
-        mio[id] = { opcion, fecha: new Date().toISOString() };
+        (mio[id]?.opciones || []).forEach((o) => votos[id][o]--);
+        opciones.forEach((o) => (votos[id][o] = (votos[id][o] || 0) + 1));
+        mio[id] = { opciones, fecha: new Date().toISOString() };
       },
+      async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
+      async cerrarEncuesta(id) { encuestas.find((e) => e.id === id).cerrada = true; },
       async entrar() { await pausa(); },
       async salir() { user = null; listener(null); },
       async entrarConClave(email, clave) {
@@ -229,7 +240,9 @@
       S.resultados = d.resultados;
       S.misVotos = {};
       S.misVotosLista = d.votos.filter((v) => v.user_id === S.user?.id);
-      S.misVotosLista.forEach((v) => (S.misVotos[v.encuesta_id] = v.opcion));
+      S.misVotosLista.forEach((v) => (S.misVotos[v.encuesta_id] ??= []).push(v.opcion));
+      S.votantes = Object.fromEntries((d.votantes || []).map((x) => [x.encuesta_id, Number(x.n)]));
+      S.nominados = d.nominados !== false;
       S.participacion = Object.fromEntries((d.participacion || []).map((x) => [x.persona_id, Number(x.votos)]));
       S.adminIds = new Set(d.admins || []);
       S.migracion = d.migracion !== false;
@@ -368,7 +381,9 @@
       </div>` : "";
     const max = Math.max(1, ...rk.map((r) => r.casas));
     const resto = top.length === 3 ? rk.slice(3) : rk;
-    return `<div class="inicio-grid"><div class="col-a">
+    const g = ganadores()[0];
+    const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Ganador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
+    return cartel + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
         <div><div class="display">${planes.length}</div><div class="sub">plan${planes.length === 1 ? "" : "es"} ${etiqueta}</div></div>
@@ -567,50 +582,89 @@
   function conteo(e) {
     const res = S.resultados.filter((r) => r.encuesta_id === e.id);
     const c = e.opciones.map((o) => ({ o, n: Number(res.find((r) => r.opcion === o)?.votos || 0) }));
-    const total = c.reduce((a, x) => a + x.n, 0);
-    return { c, total, max: Math.max(0, ...c.map((x) => x.n)) };
+    const votos = c.reduce((a, x) => a + x.n, 0);
+    const personas = S.votantes?.[e.id] ?? votos;
+    return { c, total: votos, personas, max: Math.max(0, ...c.map((x) => x.n)) };
   }
+  const tipoDe = (e) => e.tipo || "simple";
+  const abierta = (e) => !e.cerrada && (tipoDe(e) === "simple" ? e.mes === mesActual() : e.mes <= mesActual());
+  const finalDe = (nom) => S.encuestas.find((x) => x.padre === nom.id);
+  // Top 3 de los nominados (si hay empate en el 3.º puesto, entran todos los empatados)
+  function topNominados(e) {
+    const c = conteo(e).c.filter((x) => x.n > 0).sort((a, b) => b.n - a.n || a.o.localeCompare(b.o));
+    if (c.length <= 3) return c.map((x) => x.o);
+    const corte = c[2].n;
+    return c.filter((x) => x.n >= corte).map((x) => x.o);
+  }
+  // Ganadores del mes: finales cerradas → nombres con más votos
+  function ganadores() {
+    return S.encuestas.filter((e) => tipoDe(e) === "final" && e.cerrada).map((e) => {
+      const { c, max } = conteo(e);
+      return { e, mes: e.mes, nombres: max ? c.filter((x) => x.n === max).map((x) => x.o) : [] };
+    }).filter((g) => g.nombres.length).sort((a, b) => b.mes.localeCompare(a.mes));
+  }
+  const personaPorNombre = (n) => S.personas.find((p) => p.nombre === n);
 
+  let seleccionNom = {};
   function tarjetaEncuesta(e) {
-    const abierta = e.mes === mesActual();
-    const mio = S.misVotos[e.id];
-    const { c, total, max } = conteo(e);
-    const verRes = !abierta || !!mio || S.admin;
+    const tipo = tipoDe(e), ab = abierta(e);
+    const mios = S.misVotos[e.id] || [];
+    const { c, total, personas, max } = conteo(e);
+    const verRes = !ab || mios.length > 0 || S.admin;
     const votantes = S.votosAdmin.filter((v) => v.encuesta_id === e.id);
-    return `<div class="encuesta">
-      <div class="pasada"><span class="eyebrow">${nombreMes(e.mes)}</span><span class="estado ${abierta ? "" : "cerrada"}">${abierta ? "Abierta" : e.mes > mesActual() ? "Próxima" : "Cerrada"}</span></div>
+    const multi = tipo === "nominacion";
+    const sel = multi ? (seleccionNom[e.id] ??= new Set(mios)) : null;
+    const fin = multi ? finalDe(e) : null;
+    const top = multi && verRes ? new Set(topNominados(e)) : new Set();
+    const estado = e.cerrada ? "Cerrada" : ab ? "Abierta" : e.mes > mesActual() ? "Próxima" : "Cerrada";
+    const etiqueta = tipo === "nominacion" ? "Fase 1 · Nominados" : tipo === "final" ? "Fase 2 · Final" : nombreMes(e.mes);
+    const gan = tipo === "final" && e.cerrada && max ? c.filter((x) => x.n === max).map((x) => x.o) : [];
+    const orden = multi && verRes ? [...c].sort((a, b) => b.n - a.n || a.o.localeCompare(b.o)) : c;
+    return `<div class="encuesta ${tipo}">
+      <div class="pasada"><span class="eyebrow">${etiqueta}${tipo !== "simple" ? ` · ${nombreMes(e.mes)}` : ""}</span><span class="estado ${ab ? "" : "cerrada"}">${estado}</span></div>
       <div class="pregunta">${esc(e.pregunta)}</div>
-      ${c.map((x) => {
-        const w = verRes && total ? (x.n / total) * 100 : 0;
-        return `<button class="opc ${mio === x.o ? "mia" : ""} ${verRes && x.n && x.n === max ? "gana" : ""}" data-a="votar" data-id="${e.id}" data-v="${esc(x.o)}" ${abierta ? "" : "disabled"}>
+      ${gan.length ? `<div class="ganador">${gan.map((n) => `${avatar(personaPorNombre(n) || { nombre: n })}<span><span class="eyebrow">🏆 Ganador del mes</span><b>${esc(n)}</b></span>`).join("")}</div>` : ""}
+      ${multi && ab ? `<p class="ayuda" style="margin:-8px 0 12px">Elige hasta <b>${e.max_votos}</b>. Los 3 más votados pasan a la final.</p>` : ""}
+      ${orden.map((x) => {
+        const w = verRes && max ? (x.n / (multi ? max : total || 1)) * 100 : 0;
+        const marcado = multi ? sel.has(x.o) : mios.includes(x.o);
+        return `<button class="opc ${marcado ? "mia" : ""} ${verRes && x.n && (multi ? top.has(x.o) : x.n === max) ? "gana" : ""}" data-a="${multi ? "nom-toggle" : "votar"}" data-id="${e.id}" data-v="${esc(x.o)}" ${ab ? "" : "disabled"}>
           <i class="relleno" style="width:${w}%"></i>
-          <span>${mio === x.o ? '<span class="check">✓</span>' : ""}${esc(x.o)}</span>
-          <span class="pct">${verRes ? Math.round(w) + "%" : ""}</span>
+          <span>${marcado ? '<span class="check">✓</span>' : ""}${esc(x.o)}${multi && verRes && top.has(x.o) ? ' <span class="insignia mini">Top</span>' : ""}</span>
+          <span class="pct">${verRes ? (multi ? `${x.n} voto${x.n === 1 ? "" : "s"}` : Math.round(total ? (x.n / total) * 100 : 0) + "%") : ""}</span>
         </button>`;
       }).join("")}
+      ${multi && ab ? `<button class="btn full" style="margin-top:6px" data-a="nom-enviar" data-id="${e.id}" ${sel.size ? "" : "disabled"}>${mios.length ? "Cambiar mis nominados" : "Enviar mis nominados"} (${sel.size}/${e.max_votos})</button>` : ""}
       <div class="pie-enc">
-        <span>${total} voto${total === 1 ? "" : "s"}${abierta ? (mio ? " · toca otra para cambiar" : " · toca una opción para votar") : ""}</span>
+        <span>${personas} persona${personas === 1 ? "" : "s"} votaron${ab && !multi ? (mios.length ? " · toca otra para cambiar" : " · toca una opción para votar") : ""}</span>
         ${S.admin ? `<button class="link" data-a="admin-encuesta" data-id="${e.id}">Opciones</button>` : ""}
       </div>
-      ${S.admin && votantes.length ? `<details style="margin-top:10px;font-size:13px;color:var(--muted)"><summary>Quién votó (${votantes.length})</summary>${votantes.map((v) => `<div>${esc(v.email)} → ${esc(v.opcion)}</div>`).join("")}</details>` : ""}
+      ${S.admin && multi && !fin && !e.cerrada ? `<button class="btn sec full" style="margin-top:12px" data-a="crear-final" data-id="${e.id}">Cerrar nominados y crear la final →</button>` : ""}
+      ${S.admin && tipo === "final" && !e.cerrada ? `<button class="btn sec full" style="margin-top:12px" data-a="cerrar-encuesta" data-id="${e.id}">🏆 Cerrar y proclamar ganador</button>` : ""}
+      ${S.admin && votantes.length ? `<details style="margin-top:10px;font-size:13px;color:var(--muted)"><summary>Quién votó (${new Set(votantes.map((v) => v.email)).size})</summary>${Object.entries(votantes.reduce((a, v) => ((a[v.email] ??= []).push(v.opcion), a), {})).map(([m, o]) => `<div>${esc(m)} → ${esc(o.join(", "))}</div>`).join("")}</details>` : ""}
     </div>`;
   }
 
   function vEncuestas() {
-    const vigentes = S.encuestas.filter((e) => e.mes >= mesActual()).sort((a, b) => a.mes.localeCompare(b.mes));
-    const pasadas = S.encuestas.filter((e) => e.mes < mesActual());
+    const activas = S.encuestas.filter((e) => abierta(e) || e.mes > mesActual() || (e.mes === mesActual() && tipoDe(e) !== "simple"))
+      .sort((a, b) => a.mes.localeCompare(b.mes) || ({ nominacion: 0, final: 1, simple: 2 }[tipoDe(a)] - { nominacion: 0, final: 1, simple: 2 }[tipoDe(b)]));
+    const idsActivas = new Set(activas.map((e) => e.id));
+    const pasadas = S.encuestas.filter((e) => !idsActivas.has(e.id));
+    const g = ganadores()[0];
     const head = `<div class="titulo-vista"><h1 class="h2">Encuestas</h1>${S.admin ? `<button class="btn chico" data-a="nueva-encuesta">＋ Nueva</button>` : ""}</div>`;
-    const login = !S.user ? `<div class="banner"><span>Para votar, entra con tu correo. Un voto por persona.</span><button class="btn chico" data-a="login">Entrar</button></div>` : "";
-    return head + login +
-      (vigentes.length ? `<div class="rejilla enc">${vigentes.map(tarjetaEncuesta).join("")}</div>`
-        : `<div class="vacio"><p>No hay encuesta abierta este mes.</p>${S.admin ? `<button class="btn" data-a="nueva-encuesta">Crear la de ${MESES[+mesActual().slice(5) - 1]}</button>` : ""}</div>`) +
+    const login = !S.user ? `<div class="banner"><span>Para votar, entra con tu correo.</span><button class="btn chico" data-a="login">Entrar</button></div>` : "";
+    const cartel = g ? `<div class="ganador-cartel">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n }, "xl")).join("")}<div><span class="eyebrow">🏆 Ganador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h2">${esc(g.nombres.join(" y "))}</div></div></div>` : "";
+    return head + login + cartel +
+      (activas.length ? `<div class="rejilla enc">${activas.map(tarjetaEncuesta).join("")}</div>`
+        : `<div class="vacio"><p>No hay encuestas abiertas.</p>${S.admin ? `<button class="btn" data-a="nueva-encuesta">Crear la de ${MESES[+mesActual().slice(5) - 1]}</button>` : ""}</div>`) +
       (pasadas.length ? `<div class="seccion"><div class="cab"><span class="eyebrow">Anteriores</span></div><div class="lista">
         ${pasadas.map((e) => {
-          const { c, max, total } = conteo(e);
-          const gan = c.filter((x) => x.n === max && max > 0).map((x) => x.o).join(" / ") || "Sin votos";
+          const { c, max, personas } = conteo(e);
+          const t = tipoDe(e);
+          const res = t === "nominacion" ? topNominados(e).join(", ") || "Sin votos" : c.filter((x) => x.n === max && max > 0).map((x) => x.o).join(" / ") || "Sin votos";
           return `<button class="fila" data-a="ver-encuesta" data-id="${e.id}"><span class="cuerpo">
-            <div class="det">${nombreMes(e.mes)} · ${total} votos</div><div class="nom">${esc(e.pregunta)}</div></span>
-            <span class="der"><div class="gan-txt">${esc(gan)}</div></span></button>`;
+            <div class="det">${nombreMes(e.mes)} · ${t === "nominacion" ? "Nominados" : t === "final" ? "Final" : "Encuesta"} · ${personas} votaron</div><div class="nom">${esc(e.pregunta)}</div></span>
+            <span class="der"><div class="gan-txt">${t === "final" ? "🏆 " : ""}${esc(res)}</div></span></button>`;
         }).join("")}</div></div>` : "");
   }
 
@@ -777,6 +831,8 @@
 
   function insignias(p, compactas = false) {
     const b = [];
+    const copas = ganadores().filter((g) => g.nombres.includes(p.nombre)).length;
+    if (copas) b.push(`<span class="insignia copa">🏆${copas > 1 ? ` ×${copas}` : ""}</span>`);
     if (S.adminIds?.has(p.id)) b.push('<span class="insignia">Admin</span>');
     if (S.yo?.id === p.id) b.push('<span class="insignia tu">Tú</span>');
     else if (p.user_id && !compactas) b.push('<span class="insignia gris">Cuenta verificada</span>');
@@ -796,6 +852,7 @@
       });
     }
     if (p.vinculado) ev.push({ f: p.vinculado.slice(0, 10), i: "★", t: "Se unió a BMSN con su correo" });
+    ganadores().filter((g) => g.nombres.includes(p.nombre)).forEach((g) => ev.push({ f: `${g.mes}-28`, i: "🏆", t: `<b>Ganador de ${MESES[+g.mes.slice(5) - 1]}</b>`, a: "ver-encuesta", id: g.e.id }));
     return ev.sort((a, b) => b.f.localeCompare(a.f));
   }
 
@@ -958,9 +1015,23 @@
     setTimeout(() => $("#f-persona [name=nombre]")?.focus(), 250);
   }
 
+  let tipoNueva = "nominacion";
   function hojaNuevaEncuesta(opciones = ["", ""], preg = "", mes = mesActual()) {
+    if (!S.nominados) tipoNueva = "simple";
+    const nombreM = MESES[+mes.slice(5) - 1];
     abrirHoja(`${cabHoja("Nueva encuesta")}
+      ${S.nominados ? `<div class="seg seg-full" style="margin-bottom:18px">
+        <button class="${tipoNueva === "nominacion" ? "on" : ""}" data-a="tipo-encuesta" data-v="nominacion">🏆 Ganador del mes</button>
+        <button class="${tipoNueva === "simple" ? "on" : ""}" data-a="tipo-encuesta" data-v="simple">Encuesta normal</button></div>` : ""}
       <form id="f-encuesta" autocomplete="off">
+      ${tipoNueva === "nominacion" ? `
+        <p class="sub" style="margin:0 0 16px"><b style="color:var(--ink)">Fase 1 · Nominados:</b> cada uno vota a varias personas. Cuando la cierres, los <b style="color:var(--ink)">3 más votados</b> pasan a la <b style="color:var(--ink)">Fase 2 · Final</b>, donde se elige al ganador del mes con un solo voto.</p>
+        <label class="campo"><span>Mes</span><input type="month" name="mes" value="${mes}" required></label>
+        <label class="campo"><span>Título</span><input name="pregunta" maxlength="120" value="${esc(preg || `Nominados de ${nombreM}`)}" required></label>
+        <label class="campo"><span>¿A cuántas personas puede nominar cada uno?</span>
+          <select name="max">${[1, 2, 3, 4, 5].map((n) => `<option ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        <p class="ayuda">Nominables: las ${S.personas.length} personas de BMSN.</p>
+        <div class="pie-hoja"><button class="btn full" type="submit">Abrir nominaciones</button></div>` : `
         <input class="input-grande" name="pregunta" maxlength="120" placeholder="¿Cuál fue el mejor plan?" value="${esc(preg)}" required>
         <label class="campo" style="margin-top:20px"><span>Mes</span><input type="month" name="mes" value="${mes}" min="${mesActual()}" required></label>
         <div class="fila-acc"><span class="h3">Opciones</span></div>
@@ -970,7 +1041,7 @@
         </div>
         <div class="opciones-edit" id="ops">${opciones.map((o, i) => `<div class="o"><input name="op" maxlength="60" value="${esc(o)}" placeholder="Opción ${i + 1}"><button type="button" data-a="op-quitar" aria-label="Quitar">−</button></div>`).join("")}</div>
         <button type="button" class="link" data-a="op-mas">＋ Añadir opción</button>
-        <div class="pie-hoja"><button class="btn full" type="submit">Crear encuesta</button></div>
+        <div class="pie-hoja"><button class="btn full" type="submit">Crear encuesta</button></div>`}
       </form>`);
   }
 
@@ -1094,11 +1165,41 @@
     },
     votar: async (d) => {
       if (!S.user) return hojaLogin("Entra con tu correo para votar. Se cuenta un voto por correo.");
-      if (S.misVotos[d.id] === d.v) return;
+      const mios = S.misVotos[d.id] || [];
+      if (mios.length === 1 && mios[0] === d.v) return;
       const enHoja = hoja.open;
-      await hacer(() => api.votar(d.id, d.v), S.misVotos[d.id] ? "Voto cambiado" : "¡Voto registrado!");
+      await hacer(() => (S.nominados ? api.votarVarios(d.id, [d.v]) : api.votar(d.id, d.v)), mios.length ? "Voto cambiado" : "¡Voto registrado!");
       if (enHoja) acciones["ver-encuesta"](d);
     },
+    "nom-toggle": (d) => {
+      if (!S.user) return hojaLogin("Entra con tu correo para nominar.");
+      const e = S.encuestas.find((x) => x.id === d.id);
+      const sel = (seleccionNom[d.id] ??= new Set(S.misVotos[d.id] || []));
+      if (sel.has(d.v)) sel.delete(d.v);
+      else if (sel.size >= e.max_votos) return toast(`Puedes nominar como máximo a ${e.max_votos}`, true);
+      else sel.add(d.v);
+      const y = scrollY; render(); scrollTo(0, y);
+    },
+    "nom-enviar": async (d) => {
+      const sel = [...(seleccionNom[d.id] || [])];
+      if (!sel.length) return;
+      const habia = (S.misVotos[d.id] || []).length;
+      if (await hacer(() => api.votarVarios(d.id, sel), habia ? "Nominados cambiados" : "¡Nominados enviados!")) delete seleccionNom[d.id];
+    },
+    "crear-final": async (d) => {
+      const e = S.encuestas.find((x) => x.id === d.id);
+      const top = topNominados(e);
+      if (top.length < 2) return toast("Hacen falta al menos 2 nominados con votos", true);
+      if (!confirm(`Se cierran los nominados y pasan a la final:\n\n${top.join("\n")}\n\n¿Continuar?`)) return;
+      await hacer(async () => {
+        await api.crearEncuesta({ mes: e.mes, tipo: "final", max_votos: 1, padre: e.id, opciones: top, pregunta: `¿Quién es el ganador de ${MESES[+e.mes.slice(5) - 1]}?` });
+        await api.cerrarEncuesta(e.id);
+      }, "¡Final creada! Ya se puede votar");
+    },
+    "cerrar-encuesta": async (d) => {
+      if (confirm("¿Cerrar la votación? Se proclamará al ganador y ya no se podrá votar.")) await hacer(() => api.cerrarEncuesta(d.id), "🏆 ¡Tenemos ganador!");
+    },
+    "tipo-encuesta": (d) => { tipoNueva = d.v; hojaNuevaEncuesta(); },
     "ver-encuesta": (d) => {
       const e = S.encuestas.find((x) => x.id === d.id);
       if (e) abrirHoja(`<div class="hoja-cab"><span></span><button class="cerrar" data-a="cerrar" aria-label="Cerrar">${ICON.cerrar}</button></div>${tarjetaEncuesta(e)}`);
@@ -1249,6 +1350,15 @@
       if (await hacer(() => api.editarPerfil(e.id, { nombre, bio: e.bio.trim(), emoji: e.emoji, color: e.color, desde: e.desde || null }, propio), "Perfil guardado")) {
         edicion = null; hojaPerfil(e.id);
       } else btn.disabled = false;
+    }
+    if (f.id === "f-encuesta" && f.max) {
+      const opciones = S.personas.map((p) => p.nombre);
+      if (opciones.length < 2) return toast("Hacen falta al menos 2 personas", true);
+      btn.disabled = true;
+      if (await hacer(() => api.crearEncuesta({ mes: f.mes.value, pregunta: f.pregunta.value.trim(), opciones, tipo: "nominacion", max_votos: Number(f.max.value) }), "Nominaciones abiertas")) {
+        cerrarHoja(); location.hash = "#encuestas";
+      } else btn.disabled = false;
+      return;
     }
     if (f.id === "f-encuesta") {
       const opciones = [...new Set(recogerOpciones().map((s) => s.trim()).filter(Boolean))];
