@@ -783,3 +783,5 @@ body.miembro .nav { grid-template-columns: repeat(4, 1fr); }
 
 /* Fotos de perfil: siempre recortadas al círculo, en cualquier tema */
 .av.foto { background-size: cover !important; background-position: center !important; background-repeat: no-repeat !important; }
+.opc-datos { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 3px; letter-spacing: .02em; }
+.opc.mia .opc-datos { color: var(--ink-2); }

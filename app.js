@@ -142,6 +142,7 @@
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
       ponerTema: (tema) => q(sb.rpc("poner_tema", { p_tema: tema })),
+      automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
       votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
       cerrarEncuesta: (id) => q(sb.from("encuestas").update({ cerrada: true }).eq("id", id)),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
@@ -170,10 +171,10 @@
     const m = mesActual(), ant = sumarDias(m + "-01", -1).slice(0, 7);
     const nombresDemo = personas.map((p) => p.nombre).sort((a, b) => a.localeCompare(b));
     const encuestas = [
-      { id: "n1", mes: m, tipo: "nominacion", max_votos: 3, cerrada: false, pregunta: `Nominados de ${MESES[+m.slice(5) - 1]}`, opciones: nombresDemo },
+      { id: "n1", mes: m, tipo: "nominacion", max_votos: 3, cerrada: false, creado: new Date().toISOString(), pregunta: `Jugador del mes · ${MESES[+m.slice(5) - 1]}`, opciones: nombresDemo },
       { id: "e1", mes: m, tipo: "simple", max_votos: 1, cerrada: false, pregunta: "¿Cuál fue el mejor plan del mes?", opciones: ["Asado", "Karaoke", "Noche de pelis", "Playa"] },
-      { id: "n0", mes: ant, tipo: "nominacion", max_votos: 3, cerrada: true, pregunta: `Nominados de ${MESES[+ant.slice(5) - 1]}`, opciones: nombresDemo },
-      { id: "f0", mes: ant, tipo: "final", max_votos: 1, cerrada: true, padre: "n0", pregunta: `¿Quién es el ganador de ${MESES[+ant.slice(5) - 1]}?`, opciones: ["Diego", "Luis", "Camila"] },
+      { id: "n0", mes: ant, tipo: "nominacion", max_votos: 3, cerrada: true, pregunta: `Jugador del mes · ${MESES[+ant.slice(5) - 1]}`, opciones: nombresDemo },
+      { id: "f0", mes: ant, tipo: "final", max_votos: 1, cerrada: true, padre: "n0", pregunta: `¿Quién es el jugador de ${MESES[+ant.slice(5) - 1]}?`, opciones: ["Diego", "Luis", "Camila"] },
     ];
     const votos = { n1: { Ana: 4, Diego: 3, Luis: 3, Sofía: 2, Mateo: 1 }, e1: { Asado: 4, Karaoke: 2, "Noche de pelis": 1 },
       n0: { Diego: 6, Luis: 5, Camila: 4, Ana: 2 }, f0: { Diego: 5, Luis: 3, Camila: 1 } };
@@ -233,6 +234,7 @@
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
+      async automatizar() { return "nada"; },
       async cerrarEncuesta(id) { encuestas.find((e) => e.id === id).cerrada = true; },
       async entrar() { await pausa(); },
       async salir() { user = null; listener(null); },
@@ -404,7 +406,7 @@
     const max = Math.max(1, ...rk.map((r) => r.casas));
     const resto = top.length === 3 ? rk.slice(3) : rk;
     const g = ganadores()[0];
-    const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Ganador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
+    const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
     return cartel + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
@@ -626,6 +628,15 @@
     }).filter((g) => g.nombres.length).sort((a, b) => b.mes.localeCompare(a.mes));
   }
   const personaPorNombre = (n) => S.personas.find((p) => p.nombre === n);
+  // "5/5 noviembre · 🏠 2": asistencia y casas de esa persona en el mes de la votación
+  function datosMes(nombre, mes) {
+    const pe = personaPorNombre(nombre);
+    if (!pe) return "";
+    const delMes = S.planes.filter((x) => x.fecha.startsWith(mes) && (esMiembroEn(pe, x.fecha) || x.asistentes.includes(pe.id)));
+    const fue = delMes.filter((x) => x.asistentes.includes(pe.id)).length;
+    const casas = delMes.filter((x) => x.anfitrion === pe.id).length;
+    return `${fue}/${delMes.length} ${MESES[+mes.slice(5) - 1]}${casas ? ` · 🏠 ${casas} casa${casas === 1 ? "" : "s"}` : ""}`;
+  }
 
   let seleccionNom = {};
   function tarjetaEncuesta(e) {
@@ -645,14 +656,14 @@
     return `<div class="encuesta ${tipo}">
       <div class="pasada"><span class="eyebrow">${etiqueta}${tipo !== "simple" ? ` · ${nombreMes(e.mes)}` : ""}</span><span class="estado ${ab ? "" : "cerrada"}">${estado}</span></div>
       <div class="pregunta">${esc(e.pregunta)}</div>
-      ${gan.length ? `<div class="ganador">${gan.map((n) => `${avatar(personaPorNombre(n) || { nombre: n })}<span><span class="eyebrow">🏆 Ganador del mes</span><b>${esc(n)}</b></span>`).join("")}</div>` : ""}
-      ${multi && ab ? `<p class="ayuda" style="margin:-8px 0 12px">Elige hasta <b>${e.max_votos}</b>. Los 3 más votados pasan a la final.</p>` : ""}
+      ${gan.length ? `<div class="ganador">${gan.map((n) => `${avatar(personaPorNombre(n) || { nombre: n })}<span><span class="eyebrow">🏆 Jugador del mes</span><b>${esc(n)}</b></span>`).join("")}</div>` : ""}
+      ${multi && ab ? `<p class="ayuda" style="margin:-8px 0 12px">Elige hasta <b>${e.max_votos}</b>. Los 3 más votados pasan a la final${e.creado ? `, que se abre sola el <b>${fechaCorta(sumarDias(new Date(e.creado).toLocaleDateString("en-CA", { timeZone: TZ }), 2))}</b>` : ""}.</p>` : ""}
       ${orden.map((x) => {
         const w = verRes && max ? (x.n / (multi ? max : total || 1)) * 100 : 0;
         const marcado = multi ? sel.has(x.o) : mios.includes(x.o);
         return `<button class="opc ${marcado ? "mia" : ""} ${verRes && x.n && (multi ? top.has(x.o) : x.n === max) ? "gana" : ""}" data-a="${multi ? "nom-toggle" : "votar"}" data-id="${e.id}" data-v="${esc(x.o)}" ${ab ? "" : "disabled"}>
           <i class="relleno" style="width:${w}%"></i>
-          <span>${marcado ? '<span class="check">✓</span>' : ""}${esc(x.o)}${multi && verRes && top.has(x.o) ? ' <span class="insignia mini">Top</span>' : ""}</span>
+          <span>${marcado ? '<span class="check">✓</span>' : ""}${esc(x.o)}${multi && verRes && top.has(x.o) ? ' <span class="insignia mini">Top</span>' : ""}${tipo !== "simple" && datosMes(x.o, e.mes) ? `<small class="opc-datos">${datosMes(x.o, e.mes)}</small>` : ""}</span>
           <span class="pct">${verRes ? (multi ? `${x.n} voto${x.n === 1 ? "" : "s"}` : Math.round(total ? (x.n / total) * 100 : 0) + "%") : ""}</span>
         </button>`;
       }).join("")}
@@ -662,7 +673,7 @@
         ${S.admin ? `<button class="link" data-a="admin-encuesta" data-id="${e.id}">Opciones</button>` : ""}
       </div>
       ${S.admin && multi && !fin && !e.cerrada ? `<button class="btn sec full" style="margin-top:12px" data-a="crear-final" data-id="${e.id}">Cerrar nominados y crear la final →</button>` : ""}
-      ${S.admin && tipo === "final" && !e.cerrada ? `<button class="btn sec full" style="margin-top:12px" data-a="cerrar-encuesta" data-id="${e.id}">🏆 Cerrar y proclamar ganador</button>` : ""}
+      ${S.admin && tipo === "final" && !e.cerrada ? `<button class="btn sec full" style="margin-top:12px" data-a="cerrar-encuesta" data-id="${e.id}">🏆 Cerrar y proclamar al jugador del mes</button>` : ""}
       ${S.admin && votantes.length ? `<details style="margin-top:10px;font-size:13px;color:var(--muted)"><summary>Quién votó (${new Set(votantes.map((v) => v.email)).size})</summary>${Object.entries(votantes.reduce((a, v) => ((a[v.email] ??= []).push(v.opcion), a), {})).map(([m, o]) => `<div>${esc(m)} → ${esc(o.join(", "))}</div>`).join("")}</details>` : ""}
     </div>`;
   }
@@ -675,7 +686,7 @@
     const g = ganadores()[0];
     const head = `<div class="titulo-vista"><h1 class="h2">Encuestas</h1>${S.admin ? `<button class="btn chico" data-a="nueva-encuesta">＋ Nueva</button>` : ""}</div>`;
     const login = !S.user ? `<div class="banner"><span>Para votar, entra con tu correo.</span><button class="btn chico" data-a="login">Entrar</button></div>` : "";
-    const cartel = g ? `<div class="ganador-cartel">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n }, "xl")).join("")}<div><span class="eyebrow">🏆 Ganador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h2">${esc(g.nombres.join(" y "))}</div></div></div>` : "";
+    const cartel = g ? `<div class="ganador-cartel">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n }, "xl")).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h2">${esc(g.nombres.join(" y "))}</div></div></div>` : "";
     return head + login + cartel +
       (activas.length ? `<div class="rejilla enc">${activas.map(tarjetaEncuesta).join("")}</div>`
         : `<div class="vacio"><p>No hay encuestas abiertas.</p>${S.admin ? `<button class="btn" data-a="nueva-encuesta">Crear la de ${MESES[+mesActual().slice(5) - 1]}</button>` : ""}</div>`) +
@@ -886,7 +897,7 @@
       });
     }
     if (p.vinculado) ev.push({ f: p.vinculado.slice(0, 10), i: "★", t: "Se unió a BMSN con su correo" });
-    ganadores().filter((g) => g.nombres.includes(p.nombre)).forEach((g) => ev.push({ f: `${g.mes}-28`, i: "🏆", t: `<b>Ganador de ${MESES[+g.mes.slice(5) - 1]}</b>`, a: "ver-encuesta", id: g.e.id }));
+    ganadores().filter((g) => g.nombres.includes(p.nombre)).forEach((g) => ev.push({ f: `${g.mes}-28`, i: "🏆", t: `<b>Jugador de ${MESES[+g.mes.slice(5) - 1]}</b>`, a: "ver-encuesta", id: g.e.id }));
     return ev.sort((a, b) => b.f.localeCompare(a.f));
   }
 
@@ -1056,15 +1067,14 @@
     const nombreM = MESES[+mes.slice(5) - 1];
     abrirHoja(`${cabHoja("Nueva encuesta")}
       ${S.nominados ? `<div class="seg seg-full" style="margin-bottom:18px">
-        <button class="${tipoNueva === "nominacion" ? "on" : ""}" data-a="tipo-encuesta" data-v="nominacion">🏆 Ganador del mes</button>
+        <button class="${tipoNueva === "nominacion" ? "on" : ""}" data-a="tipo-encuesta" data-v="nominacion">🏆 Jugador del mes</button>
         <button class="${tipoNueva === "simple" ? "on" : ""}" data-a="tipo-encuesta" data-v="simple">Encuesta normal</button></div>` : ""}
       <form id="f-encuesta" autocomplete="off">
       ${tipoNueva === "nominacion" ? `
-        <p class="sub" style="margin:0 0 16px"><b style="color:var(--ink)">Fase 1 · Nominados:</b> cada uno vota a varias personas. Cuando la cierres, los <b style="color:var(--ink)">3 más votados</b> pasan a la <b style="color:var(--ink)">Fase 2 · Final</b>, donde se elige al ganador del mes con un solo voto.</p>
+        <p class="sub" style="margin:0 0 16px">Se crea <b style="color:var(--ink)">sola el día 1 de cada mes</b> para el mes anterior, y la final <b style="color:var(--ink)">2 días después</b>. Usa esto solo si quieres abrir una a mano.</p>
         <label class="campo"><span>Mes</span><input type="month" name="mes" value="${mes}" required></label>
-        <label class="campo"><span>Título</span><input name="pregunta" maxlength="120" value="${esc(preg || `Nominados de ${nombreM}`)}" required></label>
-        <label class="campo"><span>¿A cuántas personas puede nominar cada uno?</span>
-          <select name="max">${[1, 2, 3, 4, 5].map((n) => `<option ${n === 3 ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+        <label class="campo"><span>Título</span><input name="pregunta" maxlength="120" value="${esc(preg || `Jugador del mes · ${nombreM}`)}" required></label>
+        <input type="hidden" name="max" value="3">
         <p class="ayuda">Nominables: las ${S.personas.length} personas de BMSN.</p>
         <div class="pie-hoja"><button class="btn full" type="submit">Abrir nominaciones</button></div>` : `
         <input class="input-grande" name="pregunta" maxlength="120" placeholder="¿Cuál fue el mejor plan?" value="${esc(preg)}" required>
@@ -1235,12 +1245,12 @@
       if (top.length < 2) return toast("Hacen falta al menos 2 nominados con votos", true);
       if (!confirm(`Se cierran los nominados y pasan a la final:\n\n${top.join("\n")}\n\n¿Continuar?`)) return;
       await hacer(async () => {
-        await api.crearEncuesta({ mes: e.mes, tipo: "final", max_votos: 1, padre: e.id, opciones: top, pregunta: `¿Quién es el ganador de ${MESES[+e.mes.slice(5) - 1]}?` });
+        await api.crearEncuesta({ mes: e.mes, tipo: "final", max_votos: 1, padre: e.id, opciones: top, pregunta: `¿Quién es el jugador de ${MESES[+e.mes.slice(5) - 1]}?` });
         await api.cerrarEncuesta(e.id);
       }, "¡Final creada! Ya se puede votar");
     },
     "cerrar-encuesta": async (d) => {
-      if (confirm("¿Cerrar la votación? Se proclamará al ganador y ya no se podrá votar.")) await hacer(() => api.cerrarEncuesta(d.id), "🏆 ¡Tenemos ganador!");
+      if (confirm("¿Cerrar la votación? Se proclamará al jugador del mes y ya no se podrá votar.")) await hacer(() => api.cerrarEncuesta(d.id), "🏆 ¡Tenemos jugador del mes!");
     },
     "tipo-encuesta": (d) => { tipoNueva = d.v; hojaNuevaEncuesta(); },
     "ver-encuesta": (d) => {
@@ -1426,7 +1436,7 @@
 
   // ---------- Arranque ----------
   if (!api) return render();
-  let ultimo = "inicial";
+  let ultimo = "inicial", automatizado = false;
   api.alCambiarSesion(async (user) => {
     if ((user?.id ?? null) === ultimo) return;
     const habia = ultimo !== "inicial";
@@ -1440,6 +1450,10 @@
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }
     await cargar();
+    if (!automatizado && S.nominados) {
+      automatizado = true;
+      try { if ((await api.automatizar()) !== "nada") await cargar(); } catch {}
+    }
     if (S.user && S.migracion && !S.yo && !S.errorCarga) hojaQuienSoy();
     else if (new URLSearchParams(location.search).get("accion") === "nuevo") {
       const q = new URLSearchParams(location.search); q.delete("accion");

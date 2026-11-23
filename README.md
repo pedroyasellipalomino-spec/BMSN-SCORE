@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql` y `07_tema.sql`.
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql` y `08_jugador_del_mes.sql`.
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
@@ -24,11 +24,14 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 
 Cada miembro elige su tema con el botón 🎨: **Neón**, **Vice City**, **Escudo**, **Océano** o **Día** (claro). Con sesión iniciada se guarda en su perfil y le sigue en todos sus aparatos.
 
-## Ganador del mes (encuestas en dos fases)
+## Jugador del mes (automático, en dos fases)
+
+El día 1 de cada mes se abre sola la votación del mes anterior y, 2 días después, la final (pg_cron en Supabase; además la app lo comprueba al abrirse).
+
 
 1. **Fase 1 · Nominados**: cada miembro vota a varias personas (por defecto hasta 3).
 2. El admin pulsa **Cerrar nominados y crear la final**: los 3 más votados (con empates en el 3.º puesto incluidos) pasan a la final.
-3. **Fase 2 · Final**: un voto por persona. Al cerrarla se proclama al **🏆 Ganador del mes**, que aparece en Encuestas, en Inicio y como insignia en su perfil.
+3. **Fase 2 · Final**: un voto por persona. Al cerrarla se proclama al **🏆 Jugador del mes**, que aparece en Encuestas, en Inicio y como insignia en su perfil.
 
 ## Calendario y panel de admin
 
