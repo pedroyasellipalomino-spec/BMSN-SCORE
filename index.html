@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BMSN</title>
+  <meta name="description" content="BMSN: anotación de planes, asistencia, anfitriones y encuestas mensuales.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="marca">BMSN</div>
+    <nav class="tabs" role="tablist">
+      <button class="tab activa" data-tab="resumen">Resumen</button>
+      <button class="tab" data-tab="planes">Planes</button>
+      <button class="tab" data-tab="personas">Personas</button>
+      <button class="tab" data-tab="encuestas">Encuestas</button>
+      <button class="tab" data-tab="ayuda">Cómo funciona</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="aviso" class="aviso" hidden></div>
+
+    <!-- RESUMEN -->
+    <section id="resumen" class="panel activo">
+      <div class="fila-titulo">
+        <h1>Promedios</h1>
+        <label class="filtro">Periodo
+          <select id="filtro-periodo"></select>
+        </label>
+      </div>
+      <div class="kpis" id="kpis"></div>
+      <div class="tabla-wrap">
+        <table class="tabla" id="tabla-promedios">
+          <thead>
+            <tr>
+              <th data-orden="nombre">Persona</th>
+              <th data-orden="asistencias" class="num">Asistencias</th>
+              <th data-orden="pctAsistencia" class="num">% asistencia</th>
+              <th data-orden="casas" class="num">Puso casa</th>
+              <th data-orden="pctCasa" class="num">% casa / asistencias</th>
+              <th data-orden="promMes" class="num">Prom. por mes</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="nota">% asistencia = planes a los que fue ÷ planes del periodo. % casa = veces que puso casa ÷ planes a los que fue. Prom. por mes = asistencias ÷ meses con planes.</p>
+    </section>
+
+    <!-- PLANES -->
+    <section id="planes" class="panel">
+      <h1>Planes</h1>
+      <details class="caja" id="caja-plan">
+        <summary>➕ Anotar un plan</summary>
+        <form id="form-plan" class="form">
+          <div class="grid2">
+            <label>Fecha<input type="date" name="fecha" required></label>
+            <label>Nombre del plan<input type="text" name="titulo" maxlength="80" placeholder="Asado, cumpleaños, peli…" required></label>
+          </div>
+          <label>¿Quién puso casa?
+            <select name="anfitrion"><option value="">— Nadie / fuera de casa —</option></select>
+          </label>
+          <fieldset>
+            <legend>¿Quién asistió?</legend>
+            <div class="chips" id="chips-asistentes"></div>
+          </fieldset>
+          <label>Notas (opcional)<input type="text" name="notas" maxlength="200"></label>
+          <button class="btn" type="submit">Enviar a GitHub</button>
+        </form>
+      </details>
+      <div id="lista-planes" class="lista"></div>
+    </section>
+
+    <!-- PERSONAS -->
+    <section id="personas" class="panel">
+      <h1>Personas</h1>
+      <details class="caja">
+        <summary>➕ Añadir persona</summary>
+        <form id="form-persona" class="form">
+          <div class="grid2">
+            <label>Nombre<input type="text" name="nombre" maxlength="40" required></label>
+            <label>Usuario de GitHub (para poder votar)<input type="text" name="github" maxlength="39" placeholder="opcional"></label>
+          </div>
+          <button class="btn" type="submit">Enviar a GitHub</button>
+        </form>
+      </details>
+      <div id="lista-personas" class="lista"></div>
+    </section>
+
+    <!-- ENCUESTAS -->
+    <section id="encuestas" class="panel">
+      <h1>Encuestas mensuales</h1>
+      <details class="caja">
+        <summary>➕ Crear encuesta del mes (admins)</summary>
+        <form id="form-encuesta" class="form">
+          <div class="grid2">
+            <label>Mes<input type="month" name="mes" required></label>
+            <label>Pregunta<input type="text" name="pregunta" maxlength="120" placeholder="¿Mejor plan del mes?" required></label>
+          </div>
+          <label class="check"><input type="checkbox" name="usarPersonas"> Usar las personas como opciones</label>
+          <label>Opciones (una por línea)<textarea name="opciones" rows="4" placeholder="Opción A&#10;Opción B"></textarea></label>
+          <button class="btn" type="submit">Enviar a GitHub</button>
+        </form>
+      </details>
+      <div id="lista-encuestas" class="lista"></div>
+    </section>
+
+    <!-- AYUDA -->
+    <section id="ayuda" class="panel">
+      <h1>Cómo funciona</h1>
+      <div class="caja texto">
+        <p><strong>Todo vive en GitHub.</strong> Los datos están en la carpeta <code>data/</code> del repositorio. Cuando anotas un plan, añades una persona, creas una encuesta o votas, esta página abre un <em>issue</em> de GitHub ya rellenado. Solo tienes que pulsar <strong>Submit new issue</strong>.</p>
+        <p>Una GitHub Action lee el issue, comprueba quién lo envía, guarda el cambio en <code>data/</code>, responde en el issue y lo cierra. En uno o dos minutos la página se actualiza.</p>
+        <h3>Votos verificados</h3>
+        <ul>
+          <li>Cada voto sale de una cuenta de GitHub. GitHub solo deja abrir issues a cuentas con el <strong>correo electrónico verificado</strong>.</li>
+          <li>Además, solo cuentan los votos de usuarios de GitHub registrados en <em>Personas</em>.</li>
+          <li>Un voto por cuenta y por encuesta. Si vuelves a votar, se reemplaza tu voto anterior.</li>
+          <li>Solo se aceptan votos durante el mes de la encuesta.</li>
+        </ul>
+        <h3>Permisos</h3>
+        <p>Anotar planes, personas y encuestas está reservado a los admins definidos en <code>data/config.json</code> (y al dueño del repositorio).</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="pie">BMSN · <a id="link-repo" href="#" target="_blank" rel="noopener">repositorio</a></footer>
+  <script src="app.js"></script>
+</body>
+</html>
