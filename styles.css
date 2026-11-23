@@ -632,3 +632,24 @@ body.es-admin .btn-admin-top { display: grid; }
 @media (display-mode: standalone) {
   .top { padding-top: calc(env(safe-area-inset-top, 0px) + 10px); }
 }
+
+/* ---------- Logo escudo + zonas seguras (iPad/iPhone en modo app) ---------- */
+:root { --safe-t: env(safe-area-inset-top, 0px); --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px); }
+.logo { display: inline-flex; align-items: center; gap: 10px; line-height: 1; }
+.logo img { width: 44px; height: 44px; display: block; filter: drop-shadow(0 2px 10px rgb(0 0 0 / .6)); }
+.logo-txt { font-size: 26px; }
+.top { padding-top: calc(var(--safe-t) + 12px); padding-left: calc(20px + var(--safe-l)); padding-right: calc(20px + var(--safe-r)); }
+@media (display-mode: standalone) { .top { padding-top: calc(var(--safe-t) + 12px); } }
+@media (min-width: 700px) {
+  .top { padding-left: calc(32px + var(--safe-l)); padding-right: calc(32px + var(--safe-r)); }
+}
+@media (min-width: 1024px) {
+  .top { height: calc(76px + var(--safe-t)); padding: var(--safe-t) calc(40px + var(--safe-r)) 0 40px; }
+  .logo { position: fixed; left: calc(24px + var(--safe-l)); top: calc(18px + var(--safe-t)); z-index: 30; }
+  .logo img { width: 52px; height: 52px; }
+  .logo-txt { font-size: 30px; }
+  .nav { padding-top: calc(100px + var(--safe-t)); padding-left: calc(16px + var(--safe-l)); width: calc(var(--side) + var(--safe-l)); }
+  main { margin-left: calc(var(--side) + var(--safe-l)); }
+  .top { margin-left: calc(var(--side) + var(--safe-l)); }
+  .inicio-grid .col-a, .cal-detalle { top: calc(92px + var(--safe-t)); }
+}
