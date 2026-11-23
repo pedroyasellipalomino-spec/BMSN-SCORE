@@ -801,7 +801,7 @@
     return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${S.personas.map((p) => {
       const r = st[p.id];
       return `<button class="fila ${S.yo?.id === p.id ? "yo" : ""}" data-a="perfil" data-id="${p.id}">${avatar(p)}
-        <span class="cuerpo"><div class="nom">${esc(p.nombre)}${insignias(p, true)}</div><div class="det">${p.bio ? esc(p.bio) : `${r.asistencias} planes · 🏠 ${r.casas}`}</div></span>
+        <span class="cuerpo"><div class="nom">${esc(p.nombre)}${insignias(p, true)}</div><div class="det">${p.bio ? esc(p.bio) : `${r.asistencias} planes · 🏠 ${r.casas}`} · 🏅 ${logros(p).filter((x) => x.ok).length}</div></span>
         <span class="der"><div class="big">${pct(r.pctAsistencia)}</div></span></button>`;
     }).join("")}</div>`;
   }
@@ -992,6 +992,70 @@
     return ev.sort((a, b) => b.f.localeCompare(a.f));
   }
 
+
+  // ---------- Logros ----------
+  // Cada logro tiene niveles; se muestra el más alto conseguido y el progreso hacia el siguiente.
+  const NIVELES = {
+    planes:   { icono: "📅", niveles: [[1, "Primer plan"], [25, "Habitual"], [50, "Veterano"], [75, "Leyenda"]], desc: (n) => `${n} planes` },
+    racha:    { icono: "🔥", niveles: [[5, "En racha"], [10, "Imparable"], [20, "Inquebrantable"]], desc: (n) => `${n} planes seguidos sin fallar` },
+    casa:     { icono: "🏠", niveles: [[1, "Abre su casa"], [5, "Anfitrión"], [15, "Casa abierta"]], desc: (n) => `Puso casa ${n} ${n === 1 ? "vez" : "veces"}` },
+    mes:      { icono: "💯", niveles: [[1, "Mes perfecto"], [3, "Perfeccionista"]], desc: (n) => `${n} ${n === 1 ? "mes" : "meses"} sin faltar a ningún plan` },
+    maraton:  { icono: "⚡", niveles: [[3, "Maratón"], [5, "Sin descanso"]], desc: (n) => (n === 1 ? "1 día de plan" : `${n} días seguidos de plan`) },
+    votos:    { icono: "🗳️", niveles: [[1, "Ciudadano"], [3, "Votante fiel"], [10, "Siempre opina"]], desc: (n) => `Votó en ${n} encuesta${n === 1 ? "" : "s"}` },
+    copas:    { icono: "🏆", niveles: [[1, "Jugador del mes"], [3, "Dinastía"]], desc: (n) => `Jugador del mes ${n} ${n === 1 ? "vez" : "veces"}` },
+  };
+  const ESPECIALES = [
+    { id: "cumples", icono: "🎂", nombre: "Nunca falla un cumple", desc: "Fue a todos los cumpleaños del grupo (mín. 3)" },
+    { id: "fundador", icono: "🛡️", nombre: "De los de siempre", desc: "Estuvo en el primer plan de BMSN" },
+  ];
+
+  function medidas(p) {
+    const orden = [...S.planes].sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const mios = orden.filter((x) => esMiembroEn(p, x.fecha) || x.asistentes.includes(p.id));
+    const fue = (x) => x.asistentes.includes(p.id);
+    let racha = 0, mejor = 0;
+    for (const x of mios) { racha = fue(x) ? racha + 1 : 0; mejor = Math.max(mejor, racha); }
+    const porMes = {};
+    mios.forEach((x) => (porMes[x.fecha.slice(0, 7)] ??= []).push(x));
+    const mesesPerfectos = Object.values(porMes).filter((l) => l.length >= 3 && l.every(fue)).length;
+    const dias = [...new Set(mios.filter(fue).map((x) => x.fecha))].sort();
+    let seguidos = dias.length ? 1 : 0, maxSeguidos = seguidos;
+    for (let i = 1; i < dias.length; i++) { seguidos = sumarDias(dias[i - 1], 1) === dias[i] ? seguidos + 1 : 1; maxSeguidos = Math.max(maxSeguidos, seguidos); }
+    const cumples = mios.filter((x) => /cumple/i.test(x.titulo));
+    const votos = S.yo?.id === p.id ? new Set((S.misVotosLista || []).map((v) => v.encuesta_id)).size : S.participacion?.[p.id] || 0;
+    return {
+      planes: mios.filter(fue).length, racha: mejor, casa: mios.filter((x) => x.anfitrion === p.id).length,
+      mes: mesesPerfectos, maraton: maxSeguidos, votos, copas: ganadores().filter((g) => g.nombres.includes(p.nombre)).length,
+      cumples: cumples.length >= 3 && cumples.every(fue), fundador: !!orden[0] && fue(orden[0]),
+    };
+  }
+
+  function logros(p) {
+    const m = medidas(p);
+    const lista = Object.entries(NIVELES).map(([id, def]) => {
+      const n = m[id];
+      const hechos = def.niveles.filter(([meta]) => n >= meta);
+      const actual = hechos[hechos.length - 1];
+      const sig = def.niveles.find(([meta]) => n < meta);
+      return { id, icono: def.icono, ok: !!actual, nombre: actual ? actual[1] : def.niveles[0][1], desc: def.desc(n),
+               nivel: hechos.length, maxNivel: def.niveles.length, sig, valor: n };
+    });
+    ESPECIALES.forEach((e) => lista.push({ ...e, ok: m[e.id], nivel: m[e.id] ? 1 : 0, maxNivel: 1 }));
+    return lista;
+  }
+
+  function seccionLogros(p) {
+    const l = logros(p);
+    const ok = l.filter((x) => x.ok).length;
+    return `<div class="seccion" style="margin-top:24px"><div class="cab"><span class="eyebrow">Logros</span><span class="sub">${ok} de ${l.length}</span></div>
+      <div class="logros">${l.sort((a, b) => b.ok - a.ok).map((x) => `<div class="logro ${x.ok ? "ok" : ""}" title="${esc(x.desc)}">
+        <span class="logro-ic">${x.icono}</span>
+        <span class="logro-tx"><b>${esc(x.nombre)}</b><span>${esc(x.desc)}</span>
+          ${x.sig ? `<span class="logro-barra"><i style="width:${Math.min(100, (x.valor / x.sig[0]) * 100)}%"></i></span><span class="logro-sig">Siguiente: ${esc(x.sig[1])} (${x.valor}/${x.sig[0]})</span>` : x.maxNivel > 1 && x.ok ? `<span class="logro-sig">Nivel máximo ✓</span>` : ""}</span>
+        ${x.maxNivel > 1 && x.nivel ? `<span class="logro-nivel">${"★".repeat(x.nivel)}</span>` : ""}
+      </div>`).join("")}</div></div>`;
+  }
+
   function hojaPerfil(id, todo = false) {
     const p = persona(id);
     if (!p) return;
@@ -1013,6 +1077,7 @@
         <div class="stat"><b>${r.racha}</b><span>racha actual</span></div>
         <div class="stat"><b>${votos}</b><span>${votos === 1 ? "encuesta votada" : "encuestas votadas"}</span></div>
       </div>
+      ${seccionLogros(p)}
       <div class="seccion" style="margin-top:24px"><div class="cab"><span class="eyebrow">Actividad</span><span class="sub">${dec(r.promMes)} planes/mes</span></div>
         ${lista.length ? `<div class="timeline">${lista.map((x) => `<${x.a ? `button data-a="${x.a}" data-id="${x.id}"` : "div"} class="ev">
           <span class="ic">${x.i}</span><span class="tx">${x.t}</span><span class="fe">${fechaCorta(x.f)}</span></${x.a ? "button" : "div"}>`).join("")}</div>

@@ -804,3 +804,25 @@ body.miembro.sin-perfil .nav { grid-template-columns: repeat(4, 1fr); }
 .fila.solicitud { align-items: flex-start; }
 .fila.solicitud .sol-acc { flex-direction: column; }
 @media (min-width: 700px) { .fila.solicitud .sol-acc { flex-direction: row; } .fila.solicitud { align-items: center; } }
+
+/* ---------- Logros ---------- */
+.logros { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.logro { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line); opacity: .55; filter: grayscale(.85); }
+.logro.ok { opacity: 1; filter: none; border-color: rgb(var(--neon-rgb) / .45); background: linear-gradient(135deg, rgb(var(--neon-rgb) / .10), transparent 60%), var(--surface); }
+.logro-ic { font-size: 26px; line-height: 1; flex: none; width: 34px; text-align: center; }
+.logro-tx { display: grid; gap: 2px; min-width: 0; }
+.logro-tx b { font-size: 13px; letter-spacing: .05em; text-transform: uppercase; }
+.logro-tx > span { font-size: 12.5px; color: var(--muted); }
+.logro-barra { height: 4px; background: var(--barra); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+.logro-barra i { display: block; height: 100%; background: var(--neon); }
+.logro-sig { font-size: 11px !important; letter-spacing: .02em; }
+.logro-nivel { position: absolute; top: 8px; right: 10px; font-size: 11px; color: var(--neon); letter-spacing: 1px; }
+@media (max-width: 520px) {
+  .logros { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .logro { flex-direction: column; gap: 6px; padding: 12px; }
+  .logro-ic { font-size: 24px; width: auto; text-align: left; }
+  .logro-tx b { font-size: 12px; }
+  .logro-tx > span { font-size: 11.5px; }
+  .logro-sig { display: none; }
+}
