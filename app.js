@@ -77,13 +77,11 @@
     return {
       async cargar() {
         let migracion = true, fotos = true;
-        const personasQ = sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado,foto").order("nombre").then(async (r) => {
-          if (r.error?.code !== "42703") return r;
-          fotos = false;
-          r = await sb.from("personas").select("id,nombre,user_id,bio,emoji,color,vinculado").order("nombre");
-          if (r.error?.code !== "42703") return r;
-          migracion = false;
-          return sb.from("personas").select("id,nombre").order("nombre");
+        let conDesde = true;
+        const personasQ = sb.from("personas").select("*").order("nombre").then((r) => {
+          const f = r.data?.[0];
+          if (f) { migracion = "user_id" in f; fotos = "foto" in f; conDesde = "desde" in f; }
+          return r;
         });
         const opcional = (p) => p.then((r) => r.data || []);
         const [personas, planes, asist, encuestas, resultados, participacion, admins, claveGrupo] = await Promise.all([
@@ -98,16 +96,16 @@
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
       borrarPlan: (id) => q(sb.from("planes").delete().eq("id", id)),
       crearPersona: (nombre) => q(sb.from("personas").insert({ nombre })),
       vincular: (id, nombre) => q(sb.rpc("vincular", { p_persona: id || null, p_nombre: nombre || "" })),
-      editarPerfil: (id, d, propio) => propio
+      editarPerfil: (id, d, propio) => propio && !S.admin
         ? q(sb.rpc("editar_perfil", { p_nombre: d.nombre, p_bio: d.bio, p_emoji: d.emoji, p_color: d.color }))
-        : q(sb.from("personas").update({ nombre: d.nombre, bio: d.bio, emoji: d.emoji, color: d.color }).eq("id", id)),
+        : q(sb.from("personas").update({ nombre: d.nombre, bio: d.bio, emoji: d.emoji, color: d.color, ...(S.conDesde ? { desde: d.desde || null } : {}) }).eq("id", id)),
       desvincular: (id) => q(sb.rpc("desvincular", { p_persona: id })),
       async subirFoto(id, blob) {
         const ruta = `${id}.jpg`;
@@ -135,7 +133,7 @@
 
   function crearDemo() {
     const uid = () => Math.random().toString(36).slice(2, 10);
-    const personas = ["Ana", "Luis", "Pedro", "Camila", "Diego", "Valeria", "Mateo", "Sofía"].map((n, i) => ({ id: uid(), nombre: n, user_id: i % 3 === 1 ? "otro" + i : null, bio: i === 1 ? "El que nunca falta al asado" : "", emoji: i === 4 ? "🔥" : "", color: null }));
+    const personas = ["Ana", "Luis", "Pedro", "Camila", "Diego", "Valeria", "Mateo", "Sofía"].map((n, i) => ({ id: uid(), nombre: n, user_id: i % 3 === 1 ? "otro" + i : null, bio: i === 1 ? "El que nunca falta al asado" : "", emoji: i === 4 ? "🔥" : "", color: null, desde: i === 6 ? sumarDias(hoy(), -70) : null }));
     const titulos = ["Asado", "Noche de pelis", "Cumple", "Juegos de mesa", "Fútbol", "Karaoke", "Cena", "Playa"];
     const planes = [], asist = [];
     let f = hoy();
@@ -167,7 +165,7 @@
           votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o.opcion, fecha: o.fecha })) : [],
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, claveGrupo: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, conDesde: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
@@ -237,6 +235,7 @@
       S.migracion = d.migracion !== false;
       S.fotos = d.fotos !== false;
       S.emailsAdmin = d.emailsAdmin || [];
+      S.conDesde = d.conDesde !== false;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
       S.yo = S.user ? S.personas.find((p) => p.user_id && p.user_id === S.user.id) || null : null;
       S.votosAdmin = S.admin ? d.votos : [];
@@ -256,10 +255,14 @@
     return tipo === "todo" ? S.planes : S.planes.filter((p) => p.fecha.startsWith(valor));
   }
 
-  function stats(planes) {
-    const meses = new Set(planes.map((p) => p.fecha.slice(0, 7))).size;
-    const orden = [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  const esMiembroEn = (pe, fecha) => !pe?.desde || fecha >= pe.desde;
+
+  function stats(planesTodos) {
+    const ordenTodos = [...planesTodos].sort((a, b) => b.fecha.localeCompare(a.fecha));
     return S.personas.map((pe) => {
+      const orden = ordenTodos.filter((p) => esMiembroEn(pe, p.fecha) || p.asistentes.includes(pe.id));
+      const planes = orden;
+      const meses = new Set(planes.map((p) => p.fecha.slice(0, 7))).size;
       const fue = orden.filter((p) => p.asistentes.includes(pe.id));
       const casas = planes.filter((p) => p.anfitrion === pe.id).length;
       let racha = 0;
@@ -430,6 +433,7 @@
     const porDia = {};
     delMes.forEach((p) => (porDia[p.fecha] ??= []).push(p));
     const fue = quien ? delMes.filter((p) => p.asistentes.includes(pid)).length : 0;
+    const delMesMiembro = quien ? delMes.filter((p) => esMiembroEn(quien, p.fecha) || p.asistentes.includes(pid)) : delMes;
     const casa = quien ? delMes.filter((p) => p.anfitrion === pid).length : 0;
 
     const primero = new Date(Date.UTC(y, m - 1, 1));
@@ -445,7 +449,8 @@
         if (!quien) cls = "plan";
         else if (ps.some((p) => p.anfitrion === pid)) { cls = "casa"; marca = "🏠"; }
         else if (ps.some((p) => p.asistentes.includes(pid))) { cls = "fue"; marca = "✓"; }
-        else { cls = "falto"; marca = "✕"; }
+        else if (ps.some((p) => esMiembroEn(quien, p.fecha))) { cls = "falto"; marca = "✕"; }
+        else cls = "plan antes";
       }
       celdas.push(`<button class="dia ${cls} ${f === hoy() ? "hoy" : ""} ${f === S.calDia ? "sel" : ""}" data-a="cal-dia" data-v="${f}" aria-label="${d} de ${MESES[m - 1]}${ps.length ? `, ${ps.length} plan` : ""}">
         <span class="num">${d}</span>${marca ? `<span class="mk">${marca}</span>` : ps.length ? `<span class="pt"></span>` : ""}${ps.length > 1 ? `<span class="cnt">${ps.length}</span>` : ""}</button>`);
@@ -463,7 +468,7 @@
         <label class="ver-como"><span>Ver como</span><select id="cal-persona">${opciones}</select></label>
       </div>
       <div class="cal-resumen">
-        ${quien ? `${avatar(quien, "sm")}<span><b>${esc(quien.nombre)}</b> fue a <b class="neon">${fue}</b> de ${delMes.length} plan${delMes.length === 1 ? "" : "es"}${casa ? ` · puso casa <b class="naranja">${casa}</b>` : ""}</span>`
+        ${quien ? `${avatar(quien, "sm")}<span><b>${esc(quien.nombre)}</b> fue a <b class="neon">${fue}</b> de ${delMesMiembro.length} plan${delMesMiembro.length === 1 ? "" : "es"}${casa ? ` · puso casa <b class="naranja">${casa}</b>` : ""}${quien.desde && quien.desde > mes + "-01" && quien.desde <= mes + "-31" ? ` · <span class="sub">miembro desde el ${+quien.desde.slice(8)}</span>` : ""}</span>`
           : `<span><b class="neon">${delMes.length}</b> plan${delMes.length === 1 ? "" : "es"} en ${MESES[m - 1]}</span>`}
       </div>
       <div class="cal">
@@ -483,7 +488,7 @@
   function tarjetaPlan(p, pid = null) {
     const anf = persona(p.anfitrion);
     const gente = p.asistentes.map(persona).filter(Boolean);
-    const estado = !pid ? "" : p.anfitrion === pid ? `<span class="estado-plan casa">🏠 Puso casa</span>` : p.asistentes.includes(pid) ? `<span class="estado-plan fue">✓ Fue</span>` : `<span class="estado-plan falto">✕ No fue</span>`;
+    const estado = !pid ? "" : p.anfitrion === pid ? `<span class="estado-plan casa">🏠 Puso casa</span>` : p.asistentes.includes(pid) ? `<span class="estado-plan fue">✓ Fue</span>` : esMiembroEn(persona(pid), p.fecha) ? `<span class="estado-plan falto">✕ No fue</span>` : `<span class="estado-plan">Aún no era miembro</span>`;
     return `<button class="plan" data-a="ver-plan" data-id="${p.id}">
       <span class="fecha-bloque"><b>${+p.fecha.slice(8)}</b><span>${diaSemana(p.fecha)}</span></span>
       <span class="cuerpo">
@@ -806,6 +811,7 @@
       <div class="perfil-cab" style="margin-top:-28px">${avatar(p, "xl")}<div style="min-width:0">
         <div class="h2">${esc(p.nombre)}</div>
         <div class="insignias">${insignias(p)}</div>
+        ${p.desde ? `<div class="sub" style="font-size:13px;margin-top:4px">Miembro desde el ${+p.desde.slice(8)} de ${MESES[+p.desde.slice(5, 7) - 1]} de ${p.desde.slice(0, 4)}</div>` : ""}
         ${p.bio ? `<div class="bio">${esc(p.bio)}</div>` : propio ? `<div class="sub">Añade una frase en Editar perfil</div>` : ""}
       </div></div>
       <div class="stats">
@@ -848,7 +854,7 @@
   let edicion = null;
   function hojaEditarPerfil(id) {
     const p = persona(id);
-    edicion ??= { id, nombre: p.nombre, bio: p.bio || "", emoji: p.emoji || "", color: Number.isInteger(p.color) ? p.color : null, foto: p.foto || null };
+    edicion ??= { id, nombre: p.nombre, bio: p.bio || "", emoji: p.emoji || "", color: Number.isInteger(p.color) ? p.color : null, foto: p.foto || null, desde: p.desde || "" };
     const e = edicion;
     const vista = { nombre: e.nombre || "?", emoji: e.emoji, color: e.color ?? tono(p.nombre), foto: e.foto };
     abrirHoja(`${cabHoja(S.yo?.id === id ? "Tu perfil" : "Editar perfil")}
@@ -860,6 +866,8 @@
           ${e.foto ? `<button type="button" class="btn peligro chico" data-a="quitar-foto" data-id="${id}">Quitar</button>` : ""}
           <input type="file" id="input-foto" accept="image/*" hidden></div>
           <p class="ayuda" style="margin:8px 0 0">${e.foto ? "La foto se muestra en lugar del emoji." : "Si no subes foto, se usa el emoji o tus iniciales."}</p></div>` : ""}
+        ${S.admin && S.conDesde ? `<label class="campo"><span>Miembro desde (solo admin)</span><input type="date" name="desde" value="${esc(e.desde)}">
+          <span class="ayuda" style="margin:4px 0 0">Vacío = desde siempre. Su % de asistencia solo cuenta los planes desde esta fecha.</span></label>` : ""}
         <label class="campo"><span>Tu frase</span><input name="bio" maxlength="140" value="${esc(e.bio)}" placeholder="Ej: el que siempre pone la música"></label>
         <div class="campo"><span>Avatar</span><div class="emojis">
           <button type="button" class="emo ${!e.emoji ? "on" : ""}" data-a="emo" data-v="">${esc(iniciales(e.nombre || "?"))}</button>
@@ -871,7 +879,7 @@
   }
   function guardarEdicion() {
     const f = $("#f-perfil");
-    if (f && edicion) { edicion.nombre = f.nombre.value; edicion.bio = f.bio.value; }
+    if (f && edicion) { edicion.nombre = f.nombre.value; edicion.bio = f.bio.value; if (f.desde) edicion.desde = f.desde.value; }
   }
   function repintarEdicion() { const y = hoja.scrollTop; hojaEditarPerfil(edicion.id); hoja.scrollTop = y; }
 
@@ -1238,7 +1246,7 @@
       if (!nombre) return toast("Pon un nombre", true);
       btn.disabled = true;
       const propio = S.yo?.id === e.id;
-      if (await hacer(() => api.editarPerfil(e.id, { nombre, bio: e.bio.trim(), emoji: e.emoji, color: e.color }, propio), "Perfil guardado")) {
+      if (await hacer(() => api.editarPerfil(e.id, { nombre, bio: e.bio.trim(), emoji: e.emoji, color: e.color, desde: e.desde || null }, propio), "Perfil guardado")) {
         edicion = null; hojaPerfil(e.id);
       } else btn.disabled = false;
     }
