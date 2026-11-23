@@ -657,6 +657,7 @@
       <div class="pasada"><span class="eyebrow">${etiqueta}${tipo !== "simple" ? ` · ${nombreMes(e.mes)}` : ""}</span><span class="estado ${ab ? "" : "cerrada"}">${estado}</span></div>
       <div class="pregunta">${esc(e.pregunta)}</div>
       ${gan.length ? `<div class="ganador">${gan.map((n) => `${avatar(personaPorNombre(n) || { nombre: n })}<span><span class="eyebrow">🏆 Jugador del mes</span><b>${esc(n)}</b></span>`).join("")}</div>` : ""}
+      ${tipo === "final" && ab && e.creado ? `<p class="ayuda" style="margin:-8px 0 12px">Un voto. Se cierra sola el <b>${fechaCorta(sumarDias(new Date(e.creado).toLocaleDateString("en-CA", { timeZone: TZ }), 2))}</b> y se proclama al jugador del mes.</p>` : ""}
       ${multi && ab ? `<p class="ayuda" style="margin:-8px 0 12px">Elige hasta <b>${e.max_votos}</b>. Los 3 más votados pasan a la final${e.creado ? `, que se abre sola el <b>${fechaCorta(sumarDias(new Date(e.creado).toLocaleDateString("en-CA", { timeZone: TZ }), 2))}</b>` : ""}.</p>` : ""}
       ${orden.map((x) => {
         const w = verRes && max ? (x.n / (multi ? max : total || 1)) * 100 : 0;

@@ -1,6 +1,7 @@
 -- BMSN — "Jugador del mes" automático.
 --  · Día 1 de cada mes: se abre la votación de nominados del mes anterior (hasta 3 por persona).
 --  · 2 días después: se cierra y se abre la final con los 3 más votados (empates en el 3.º incluidos).
+--  · 2 días después de la final: se cierra sola y se proclama al jugador del mes.
 -- Ejecutar después de 06_nominados.sql. Se puede ejecutar varias veces.
 
 create or replace function public.bmsn_nombre_mes(p_mes text) returns text
@@ -42,6 +43,13 @@ begin
       hecho := 'final creada';
     end if; -- si aún no hay al menos 2 nominados con votos, se espera al día siguiente
   end loop;
+
+  -- 3) La final se cierra sola 2 días después (si alguien votó): se proclama al jugador del mes
+  update encuestas f set cerrada = true
+  where f.tipo = 'final' and not f.cerrada
+    and hoy >= (f.creado at time zone 'America/Lima')::date + 2
+    and exists (select 1 from votos v where v.encuesta_id = f.id);
+  if found then hecho := 'jugador del mes proclamado'; end if;
   return hecho;
 end $$;
 -- Es idempotente y no toca nada que no toque: la app la llama al abrirse.

@@ -26,7 +26,7 @@ Cada miembro elige su tema con el botón 🎨: **Neón**, **Vice City**, **Escud
 
 ## Jugador del mes (automático, en dos fases)
 
-El día 1 de cada mes se abre sola la votación del mes anterior y, 2 días después, la final (pg_cron en Supabase; además la app lo comprueba al abrirse).
+El día 1 de cada mes se abre sola la votación del mes anterior; 2 días después, la final; y 2 días más tarde la final se cierra y se proclama al jugador del mes (pg_cron en Supabase; además la app lo comprueba al abrirse).
 
 
 1. **Fase 1 · Nominados**: cada miembro vota a varias personas (por defecto hasta 3).
