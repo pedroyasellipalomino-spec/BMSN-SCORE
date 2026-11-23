@@ -277,13 +277,14 @@
       </div>` : "";
     const max = Math.max(1, ...rk.map((r) => r.casas));
     const resto = top.length === 3 ? rk.slice(3) : rk;
-    return `
+    return `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
         <div><div class="display">${planes.length}</div><div class="sub">plan${planes.length === 1 ? "" : "es"} ${etiqueta}</div></div>
         <div class="mini"><b>${dec(prom)}</b><span class="sub">personas por plan</span><b style="margin-top:10px">${casas}</b><span class="sub">en casa de alguien</span></div>
       </div>
-      <div class="seccion">
+      ${resumenMeses()}
+      </div><div class="col-b seccion">
         <div class="cab"><span class="eyebrow">Ranking</span>
           <div class="seg">${[["asistencia", "Asistencia"], ["casas", "Puso casa"]].map(([k, l]) => `<button class="${S.metrica === k ? "on" : ""}" data-a="metrica" data-v="${k}">${l}</button>`).join("")}</div>
         </div>
@@ -297,7 +298,21 @@
             <span class="der"><div class="big">${val(r)}</div></span>
           </button>`).join("")}</div>` : "")
         : `<div class="vacio"><p>No hay planes en este periodo.</p><button class="btn" data-a="nuevo-plan">＋ Anotar un plan</button></div>`}
-      </div>`;
+      </div></div>`;
+  }
+
+  function resumenMeses() {
+    const { tipo, valor } = S.periodo;
+    if (tipo === "mes") return "";
+    const anio = tipo === "anio" ? valor : null;
+    const meses = anio ? Array.from({ length: 12 }, (_, i) => `${anio}-${String(i + 1).padStart(2, "0")}`)
+      : [...new Set(S.planes.map((p) => p.fecha.slice(0, 7)))].sort().slice(-12);
+    if (!meses.length) return "";
+    const n = meses.map((m) => S.planes.filter((p) => p.fecha.startsWith(m)).length);
+    const max = Math.max(1, ...n);
+    return `<div class="seccion meses"><div class="cab"><span class="eyebrow">Planes por mes</span></div>
+      <div class="barras">${meses.map((m, i) => `<button class="barra-mes ${m === mesActual() ? "actual" : ""}" data-a="ir-mes" data-v="${m}" title="${nombreMes(m)}: ${n[i]} planes">
+        <span class="n">${n[i] || ""}</span><i style="height:${(n[i] / max) * 100}%"></i><span class="m">${MESES[+m.slice(5) - 1].slice(0, 1).toUpperCase()}</span></button>`).join("")}</div></div>`;
   }
 
   function vPlanes() {
@@ -311,7 +326,7 @@
     S.planes.forEach((p) => (grupos[p.fecha.slice(0, 7)] ??= []).push(p));
     return head + Object.entries(grupos).map(([m, ps]) => `
       <div class="mes-cab"><span>${nombreMes(m)}</span><span>${ps.length}</span></div>
-      ${ps.map((p) => {
+      <div class="rejilla">${ps.map((p) => {
         const anf = persona(p.anfitrion);
         const gente = p.asistentes.map(persona).filter(Boolean);
         return `<button class="plan" data-a="ver-plan" data-id="${p.id}">
@@ -322,7 +337,7 @@
             <div class="pila">${gente.slice(0, 6).map((g) => avatar(g, "sm")).join("")}${gente.length > 6 ? `<span class="av sm mas">+${gente.length - 6}</span>` : ""}</div>
           </span>
         </button>`;
-      }).join("")}`).join("");
+      }).join("")}</div>`).join("");
   }
 
   function conteo(e) {
@@ -363,7 +378,7 @@
     const head = `<div class="titulo-vista"><h1 class="h2">Encuestas</h1>${S.admin ? `<button class="btn chico" data-a="nueva-encuesta">＋ Nueva</button>` : ""}</div>`;
     const login = !S.user ? `<div class="banner"><span>Para votar, entra con tu correo. Un voto por persona.</span><button class="btn chico" data-a="login">Entrar</button></div>` : "";
     return head + login +
-      (vigentes.length ? vigentes.map(tarjetaEncuesta).join('<div style="height:14px"></div>')
+      (vigentes.length ? `<div class="rejilla enc">${vigentes.map(tarjetaEncuesta).join("")}</div>`
         : `<div class="vacio"><p>No hay encuesta abierta este mes.</p>${S.admin ? `<button class="btn" data-a="nueva-encuesta">Crear la de ${MESES[+mesActual().slice(5) - 1]}</button>` : ""}</div>`) +
       (pasadas.length ? `<div class="seccion"><div class="cab"><span class="eyebrow">Anteriores</span></div><div class="lista">
         ${pasadas.map((e) => {
@@ -381,10 +396,10 @@
     if (!S.personas.length) {
       return head + bannerSesion("Entra con tu correo para añadir gente.") + `<div class="vacio"><p>Aún no hay nadie.</p><button class="btn" data-a="nueva-persona">Añadir personas</button></div>`;
     }
-    return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista">${S.personas.map((p) => {
+    return head + bannerSesion("Entra con tu correo para editar.") + `<div class="lista gente">${S.personas.map((p) => {
       const r = st[p.id];
       return `<button class="fila" data-a="perfil" data-id="${p.id}">${avatar(p)}
-        <span class="cuerpo"><div class="nom">${esc(p.nombre)}</div><div class="det">${r.asistencias} planes · puso casa ${r.casas}</div></span>
+        <span class="cuerpo"><div class="nom">${esc(p.nombre)}</div><div class="det">${r.asistencias} planes · 🏠 ${r.casas}</div></span>
         <span class="der"><div class="big">${pct(r.pctAsistencia)}</div></span></button>`;
     }).join("")}</div>`;
   }
@@ -579,6 +594,7 @@
       render();
     },
     metrica: (d) => { S.metrica = d.v; render(); },
+    "ir-mes": (d) => { S.periodo = { tipo: "mes", valor: d.v }; render(); },
     perfil: (d) => hojaPerfil(d.id),
     "ver-plan": (d) => hojaVerPlan(S.planes.find((p) => p.id === d.id)),
     "nuevo-plan": () => {
@@ -702,6 +718,13 @@
   });
 
   $("#btn-nuevo").addEventListener("click", () => acciones["nuevo-plan"]());
+  document.addEventListener("keydown", (ev) => {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey || hoja.open || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName)) return;
+    const k = ev.key.toLowerCase();
+    if (k === "n") { ev.preventDefault(); acciones["nuevo-plan"](); }
+    const rutas = { 1: "inicio", 2: "planes", 3: "encuestas", 4: "gente" };
+    if (rutas[k]) location.hash = "#" + rutas[k];
+  });
   $("#btn-cuenta").addEventListener("click", () => (S.user ? hojaCuenta() : hojaLogin()));
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
 
