@@ -120,9 +120,10 @@
           sb.from("encuestas").select("tipo").limit(1).then((r) => !r.error),
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
+        const jugadoresMes = await opcional(sb.from("jugadores_mes").select("mes,persona_id"));
         const solicitudes = S.user ? await opcional(sb.from("solicitudes").select("*").order("creado", { ascending: false }).limit(200)) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -158,6 +159,8 @@
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
       automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
+      ponerJugadorMes: (mes, persona) => q(sb.from("jugadores_mes").upsert({ mes, persona_id: persona })),
+      quitarJugadorMes: (mes) => q(sb.from("jugadores_mes").delete().eq("mes", mes)),
       votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
       cerrarEncuesta: (id) => q(sb.from("encuestas").update({ cerrada: true }).eq("id", id)),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
@@ -198,6 +201,7 @@
     let user = null, listener = () => {};
     const emailsAdmin = [];
     const solicitudes = [];
+    const jugMes = [];
     const copias = [{ id: 1, creada: sumarDias(hoy(), -3) + "T08:15:00Z", planes: 26, personas: 8, votos: 21 }];
     const pausa = () => new Promise((r) => setTimeout(r, 120));
     return {
@@ -212,7 +216,7 @@
           votantes: Object.entries(votos).map(([e, o]) => ({ encuesta_id: e, n: Math.max(0, ...Object.values(o)) + (mio[e] ? 1 : 0) })), nominados: true,
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], jugadoresMes: [...jugMes], emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
@@ -252,6 +256,8 @@
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
+      async ponerJugadorMes(mes, persona) { const i = jugMes.findIndex((j) => j.mes === mes); if (i >= 0) jugMes.splice(i, 1); jugMes.push({ mes, persona_id: persona }); },
+      async quitarJugadorMes(mes) { const i = jugMes.findIndex((j) => j.mes === mes); if (i >= 0) jugMes.splice(i, 1); },
       async automatizar() { return "nada"; },
       async pedirAsistencia(plan) { solicitudes.unshift({ id: uid(), tipo: "asistencia", persona_id: personas.find((p) => p.user_id === user?.id)?.id, plan_id: plan, estado: "pendiente", creado: new Date().toISOString(), datos: {} }); },
       async proponerPlan(pp) { solicitudes.unshift({ id: uid(), tipo: "plan", persona_id: personas.find((p) => p.user_id === user?.id)?.id, estado: "pendiente", creado: new Date().toISOString(), datos: pp }); },
@@ -288,7 +294,7 @@
         d = await api.cargar();
         S.sinConexion = null;
         if (!DEMO) guardar("bmsn-cache", JSON.stringify({ t: Date.now(), personas: d.personas, planes: d.planes, asist: d.asist, encuestas: d.encuestas,
-          resultados: d.resultados, votantes: d.votantes, participacion: d.participacion, admins: d.admins }));
+          resultados: d.resultados, votantes: d.votantes, participacion: d.participacion, admins: d.admins, jugadoresMes: d.jugadoresMes }));
       } catch (e) {
         // Sin conexión: se muestra lo último guardado en este aparato (solo datos públicos del grupo)
         const cache = JSON.parse(leer("bmsn-cache") || "null");
@@ -314,6 +320,7 @@
       S.fotos = d.fotos !== false;
       S.emailsAdmin = d.emailsAdmin || [];
       S.solicitudes = d.solicitudes || [];
+      S.jugadoresMes = d.jugadoresMes || [];
       S.conDesde = d.conDesde !== false;
       S.conTema = !!d.conTema;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
@@ -455,7 +462,7 @@
     const max = Math.max(1, ...rk.map((r) => r.casas));
     const resto = top.length === 3 ? rk.slice(3) : rk;
     const g = ganadores()[0];
-    const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
+    const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" ${accionGanador(g)}>${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
     const dispW = wrappedDisponible();
     const anioW = dispW?.anio;
     const nW = dispW ? S.planes.filter((x) => x.fecha.startsWith(anioW)).length : 0;
@@ -735,6 +742,17 @@
             <button class="btn chico" type="submit">${S.claveGrupo ? "Cambiar" : "Guardar"}</button>
           </form>`}
         </div>
+        <div class="seccion"><div class="cab"><span class="eyebrow">🏆 Jugadores del mes</span></div>
+          <p class="sub" style="margin:-4px 0 12px">Los nuevos salen solos de las votaciones. Aquí puedes añadir o corregir uno a mano.</p>
+          <div class="lista">${ganadores().map((g) => `<div class="fila">${avatar(personaPorNombre(g.nombres[0]))}<span class="cuerpo">
+            <div class="nom">${esc(g.nombres.join(" y "))}</div><div class="det" style="text-transform:capitalize">${nombreMes(g.mes)}${g.e ? " · por votación" : ""}</div></span>
+            ${g.e ? "" : `<button class="btn peligro chico" data-a="quitar-jugador" data-v="${g.mes}" aria-label="Quitar">✕</button>`}</div>`).join("") || `<div class="fila"><span class="cuerpo"><div class="det">Aún no hay.</div></span></div>`}</div>
+          <form id="f-jugador" class="form-linea" style="margin-top:12px">
+            <input type="month" name="mes" max="${mesActual()}" required style="max-width:170px">
+            <select name="persona" required><option value="">¿Quién?</option>${S.personas.map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select>
+            <button class="btn chico" type="submit">Guardar</button>
+          </form>
+        </div>
         <div class="seccion"><div class="cab"><span class="eyebrow">Avisos</span></div>
           <p class="sub" style="margin:-4px 0 12px">Se envían solos al abrir el Jugador del mes, su final y al proclamarlo. A ti también te llegan las solicitudes nuevas.</p>
           <div class="acciones-pie" style="margin-top:0">${botonAvisos("btn sec")}<button class="btn linea" data-a="probar-aviso">Enviar aviso de prueba</button></div>
@@ -946,11 +964,16 @@
   }
   // Ganadores del mes: finales cerradas → nombres con más votos
   function ganadores() {
-    return S.encuestas.filter((e) => tipoDe(e) === "final" && e.cerrada).map((e) => {
+    const manual = (S.jugadoresMes || []).map((j) => ({ e: null, mes: j.mes, nombres: [persona(j.persona_id)?.nombre].filter(Boolean) })).filter((g) => g.nombres.length);
+    const meses = new Set(manual.map((g) => g.mes));
+    const votados = S.encuestas.filter((e) => tipoDe(e) === "final" && e.cerrada && !meses.has(e.mes)).map((e) => {
       const { c, max } = conteo(e);
       return { e, mes: e.mes, nombres: max ? c.filter((x) => x.n === max).map((x) => x.o) : [] };
-    }).filter((g) => g.nombres.length).sort((a, b) => b.mes.localeCompare(a.mes));
+    }).filter((g) => g.nombres.length);
+    return [...manual, ...votados].sort((a, b) => b.mes.localeCompare(a.mes));
   }
+  // Abrir un jugador del mes: su encuesta si la hay; si no, su perfil
+  const accionGanador = (g) => (g.e ? `data-a="ver-encuesta" data-id="${g.e.id}"` : `data-a="perfil" data-id="${personaPorNombre(g.nombres[0])?.id || ""}"`);
   const personaPorNombre = (n) => S.personas.find((p) => p.nombre === n);
   // "5/5 noviembre · 🏠 2": asistencia y casas de esa persona en el mes de la votación
   function datosMes(nombre, mes) {
@@ -1283,7 +1306,7 @@
       });
     }
     if (p.vinculado) ev.push({ f: p.vinculado.slice(0, 10), i: "★", t: "Se unió a BMSN con su correo" });
-    ganadores().filter((g) => g.nombres.includes(p.nombre)).forEach((g) => ev.push({ f: `${g.mes}-28`, i: "🏆", t: `<b>Jugador de ${MESES[+g.mes.slice(5) - 1]}</b>`, a: "ver-encuesta", id: g.e.id }));
+    ganadores().filter((g) => g.nombres.includes(p.nombre)).forEach((g) => ev.push({ f: `${g.mes}-28`, i: "🏆", t: `<b>Jugador de ${MESES[+g.mes.slice(5) - 1]}</b>`, ...(g.e ? { a: "ver-encuesta", id: g.e.id } : {}) }));
     return ev.sort((a, b) => b.f.localeCompare(a.f));
   }
 
@@ -1645,6 +1668,7 @@
     "avisos-on": () => activarAvisos(),
     "avisos-off": () => desactivarAvisos(),
     "no-avisos": () => { guardar("bmsn-sin-avisos", "1"); render(); },
+    "quitar-jugador": async (d) => { if (confirm(`¿Quitar el Jugador de ${nombreMes(d.v)}?`)) await hacer(() => api.quitarJugadorMes(d.v), "Quitado"); },
     "probar-aviso": async () => { try { await api.probarAviso(); toast("Aviso enviado: debería llegarte en unos segundos"); } catch (e) { toast(msgError(e), true); } },
     temas: () => hojaTemas(),
     tema: async (d) => {
@@ -1878,6 +1902,12 @@
       btn.disabled = true;
       if (await hacer(() => api.ponerClaveGrupo(clave), "Contraseña del grupo guardada")) f.reset();
       btn.disabled = false;
+      return;
+    }
+    if (f.id === "f-jugador") {
+      if (!f.mes.value || !f.persona.value) return;
+      btn.disabled = true;
+      await hacer(() => api.ponerJugadorMes(f.mes.value, f.persona.value), `Jugador de ${nombreMes(f.mes.value)} guardado`);
       return;
     }
     if (f.id === "f-admin") {

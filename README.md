@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql`, `08_jugador_del_mes.sql`, `09_mejoras.sql`, `10_solicitudes.sql` y `11_avisos.sql`, y despliega la función `supabase/functions/avisar` (secretos VAPID_PUBLICA, VAPID_PRIVADA, AVISOS_SECRETO).
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql`, `08_jugador_del_mes.sql`, `09_mejoras.sql`, `10_solicitudes.sql`, `11_avisos.sql` y `12_jugadores_mes.sql`, y despliega la función `supabase/functions/avisar` (secretos VAPID_PUBLICA, VAPID_PRIVADA, AVISOS_SECRETO).
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
