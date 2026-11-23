@@ -146,6 +146,9 @@
       pedirAsistencia: (plan) => q(sb.rpc("pedir_asistencia", { p_plan: plan })),
       proponerPlan: (p) => q(sb.rpc("proponer_plan", { p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
       resolverSolicitud: (id, ok) => q(sb.rpc("resolver_solicitud", { p_id: id, p_aprobar: ok })),
+      guardarSuscripcion: (j) => q(sb.rpc("guardar_suscripcion", { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth })),
+      borrarSuscripcion: (endpoint) => q(sb.rpc("borrar_suscripcion", { p_endpoint: endpoint })),
+      probarAviso: () => q(sb.rpc("probar_aviso")),
       hacerCopia: () => q(sb.rpc("hacer_copia")),
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
@@ -253,6 +256,7 @@
         if (so.tipo === "asistencia") asist.push({ plan_id: so.plan_id, persona_id: so.persona_id });
         else await this.guardarPlan({ ...so.datos, id: null });
       },
+      async guardarSuscripcion() {}, async borrarSuscripcion() {}, async probarAviso() {},
       async hacerCopia() { copias.unshift({ id: copias.length + 1, creada: new Date().toISOString(), planes: planes.length, personas: personas.length, votos: 0 }); },
       async listarCopias() { return copias; },
       async descargarCopia() { return { version: 1, fecha: new Date().toISOString(), personas, planes, asistencias: asist, encuestas }; },
@@ -363,7 +367,7 @@
     const demo = DEMO ? `<div class="banner"><span>Modo demo: datos inventados, nada se guarda.</span></div>` : "";
     const mig = !S.migracion && S.admin ? bannerError("Falta activar los perfiles: ejecuta <b>supabase/02_perfiles.sql</b> en Supabase.") : "";
     const sinPerfil = S.user && S.migracion && !S.yo && S.cargado ? `<div class="banner"><span>Tu correo aún no está unido a tu perfil.</span><button class="btn chico" data-a="quien-soy">¿Quién eres?</button></div>` : "";
-    const inst = v === "inicio" ? bannerInstalar() : "";
+    const inst = v === "inicio" ? bannerInstalar() || bannerAvisos() : "";
     $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
     const nPend = S.admin ? (S.solicitudes || []).filter((x) => x.estado === "pendiente").length : 0;
@@ -609,6 +613,10 @@
             <input type="text" name="clave" placeholder="${S.claveGrupo ? "Nueva contraseña" : "Contraseña del grupo"}" required>
             <button class="btn chico" type="submit">${S.claveGrupo ? "Cambiar" : "Guardar"}</button>
           </form>`}
+        </div>
+        <div class="seccion"><div class="cab"><span class="eyebrow">Avisos</span></div>
+          <p class="sub" style="margin:-4px 0 12px">Se envían solos al abrir el Jugador del mes, su final y al proclamarlo. A ti también te llegan las solicitudes nuevas.</p>
+          <div class="acciones-pie" style="margin-top:0">${botonAvisos("btn sec")}<button class="btn linea" data-a="probar-aviso">Enviar aviso de prueba</button></div>
         </div>
         <div class="seccion"><div class="cab"><span class="eyebrow">Copias de seguridad</span><button class="link" data-a="hacer-copia">Hacer una ahora</button></div>
           <p class="sub" style="margin:-4px 0 12px">Cada domingo se guarda sola una copia completa (se conservan las 12 últimas). Descarga una de vez en cuando y guárdala en tu iCloud o tu computadora.</p>
@@ -985,7 +993,7 @@
   };
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); APP.aviso = e; render(); });
   window.addEventListener("appinstalled", () => { APP.aviso = null; toast("BMSN instalada ✓"); render(); });
-  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
   const puedeInstalar = () => !APP.standalone;
   const leer = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -1029,6 +1037,66 @@
           <span class="bola" style="background:${t.c1}"></span><span class="bola" style="background:${t.c2}"></span><span class="bola" style="background:${t.ink}"></span></span>
         <span class="info"><b>${t.nombre}</b><span>${t.desc}</span></span><span class="ok">✓</span></button>`).join("")}</div>
       <div style="height:16px"></div><button class="btn full" data-a="cerrar">Listo</button>`);
+  }
+
+
+  // ---------- Avisos push ----------
+  const AVISOS = { estado: "?" }; // "no" (sin soporte) · "instalar" (iOS sin instalar) · "denegado" · "on" · "off"
+  const b64aBytes = (b) => { const p = "=".repeat((4 - (b.length % 4)) % 4); const r = atob((b + p).replace(/-/g, "+").replace(/_/g, "/")); return Uint8Array.from(r, (c) => c.charCodeAt(0)); };
+  async function estadoAvisos() {
+    const cfg = window.BMSN_CONFIG || {};
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window) || !cfg.vapidPublica) {
+      AVISOS.estado = APP.ios && !APP.standalone ? "instalar" : "no";
+    } else if (Notification.permission === "denied") AVISOS.estado = "denegado";
+    else {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg && (await reg.pushManager.getSubscription());
+      AVISOS.estado = sub ? "on" : "off";
+      if (sub && S.user) api.guardarSuscripcion(sub.toJSON()).catch(() => {}); // refresca a qué cuenta pertenece
+    }
+    return AVISOS.estado;
+  }
+  async function activarAvisos() {
+    if (!S.user) return hojaLogin("Entra con tu correo para recibir avisos.");
+    if (AVISOS.estado === "instalar") return instalar();
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { AVISOS.estado = perm === "denied" ? "denegado" : "off"; toast("Sin permiso para avisos", true); return render(); }
+      const reg = (await navigator.serviceWorker.getRegistration()) || (await navigator.serviceWorker.register("sw.js"));
+      await navigator.serviceWorker.ready;
+      let sub;
+      try {
+        sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64aBytes(window.BMSN_CONFIG.vapidPublica) }));
+      } catch {
+        throw new Error(APP.ios ? "No se pudo activar. Abre BMSN desde el icono de la pantalla de inicio e inténtalo otra vez." : "El navegador no pudo activar los avisos. Inténtalo de nuevo en un momento.");
+      }
+      await api.guardarSuscripcion(sub.toJSON());
+      AVISOS.estado = "on"; guardar("bmsn-sin-avisos", "1");
+      toast("🔔 Avisos activados");
+    } catch (e) { toast(msgError(e), true); }
+    render(); if (hoja.open && S.yo) hojaPerfil(S.yo.id);
+  }
+  async function desactivarAvisos() {
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = reg && (await reg.pushManager.getSubscription());
+      if (sub) { await api.borrarSuscripcion(sub.endpoint).catch(() => {}); await sub.unsubscribe(); }
+      AVISOS.estado = "off"; toast("Avisos desactivados");
+    } catch (e) { toast(msgError(e), true); }
+    if (hoja.open && S.yo) hojaPerfil(S.yo.id);
+  }
+  function botonAvisos(clase = "btn linea full") {
+    const e = AVISOS.estado;
+    if (e === "no" || e === "?") return "";
+    if (e === "on") return `<button class="${clase}" data-a="avisos-off">🔔 Avisos activados · desactivar</button>`;
+    if (e === "denegado") return `<p class="ayuda" style="text-align:center">🔕 Bloqueaste los avisos. Actívalos en los ajustes del teléfono para BMSN.</p>`;
+    if (e === "instalar") return `<button class="${clase}" data-a="instalar">🔔 Instala BMSN para recibir avisos</button>`;
+    return `<button class="${clase}" data-a="avisos-on">🔔 Activar avisos</button>`;
+  }
+  function bannerAvisos() {
+    if (!S.user || DEMO || AVISOS.estado !== "off" || leer("bmsn-sin-avisos")) return "";
+    return `<div class="banner instalar"><span class="ico-app"></span><span><b>Activa los avisos</b><br><span class="sub">Te avisamos cuando se vota al Jugador del mes.</span></span>
+      <button class="btn chico" data-a="avisos-on">Activar</button><button class="cerrar chico" data-a="no-avisos" aria-label="Ocultar">${ICON.cerrar}</button></div>`;
   }
 
   function hojaCuenta() {
@@ -1182,6 +1250,7 @@
         ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
       </div>
       ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
+      ${propio && botonAvisos() ? `<div style="margin-top:10px">${botonAvisos()}</div>` : ""}
       ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="wrapped">🎁 Ver mi BMSN Wrapped</button>` : ""}
       ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="temas">🎨 Cambiar tema</button>` : ""}
       ${propio && puedeInstalar() ? `<button class="btn linea full" style="margin-top:10px" data-a="instalar">📲 Instalar BMSN como app</button>` : ""}
@@ -1438,6 +1507,10 @@
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
     "quien-soy": () => hojaQuienSoy(),
     instalar: () => instalar(),
+    "avisos-on": () => activarAvisos(),
+    "avisos-off": () => desactivarAvisos(),
+    "no-avisos": () => { guardar("bmsn-sin-avisos", "1"); render(); },
+    "probar-aviso": async () => { try { await api.probarAviso(); toast("Aviso enviado: debería llegarte en unos segundos"); } catch (e) { toast(msgError(e), true); } },
     temas: () => hojaTemas(),
     tema: async (d) => {
       const id = aplicarTema(d.v);
@@ -1752,6 +1825,7 @@
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }
     await cargar();
+    if (AVISOS.estado === "?" || user) { await estadoAvisos(); render(); }
     if (!automatizado && S.nominados) {
       automatizado = true;
       try { if ((await api.automatizar()) !== "nada") await cargar(); } catch {}

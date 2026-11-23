@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql`, `08_jugador_del_mes.sql` y `09_mejoras.sql`.
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql`, `07_tema.sql`, `08_jugador_del_mes.sql`, `09_mejoras.sql`, `10_solicitudes.sql` y `11_avisos.sql`, y despliega la función `supabase/functions/avisar` (secretos VAPID_PUBLICA, VAPID_PRIVADA, AVISOS_SECRETO).
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
@@ -19,6 +19,21 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - Cada correo que entra elige quién es: si escribe un nombre que ya existe, su cuenta se une a ese perfil con todas sus estadísticas; si no, se crea uno nuevo.
 - Cada miembro edita su propio perfil (nombre, emoji, color y frase). El admin puede editar cualquiera y soltar una cuenta de un perfil equivocado.
 - El perfil muestra asistencia, veces que puso casa, racha, encuestas votadas y el historial de actividad. Qué votó cada uno solo lo ve esa persona (y el admin).
+
+## Miembros: "Yo fui" y "Proponer plan"
+
+- En un plan pasado, el miembro pulsa **🙋 Yo fui** y el admin lo aprueba desde su panel.
+- Con el **＋** un miembro **propone** un plan completo; al aprobarlo entra al calendario y a las estadísticas.
+- Los meses importados de la lista llevan la marca **≈**: los totales son exactos, pero quién fue a cada plan es aproximado.
+
+## Logros y BMSN Wrapped
+
+- **Logros** con niveles en cada perfil: planes, rachas, casas, meses perfectos, maratón, votos, Jugador del mes, cumpleaños y "De los de siempre".
+- **BMSN Wrapped**: el resumen del año en pantallas tipo historia (tarjeta en Inicio, botón en el perfil o `#wrapped`).
+
+## Avisos push
+
+Notificaciones al teléfono (Android, computadora e iPhone/iPad con BMSN instalada en la pantalla de inicio) cuando se abre el Jugador del mes, su final y al proclamarlo; al admin, además, por cada solicitud nueva. Se activan en el perfil (🔔 Activar avisos). Los envía la Edge Function `avisar`, llamada desde la base de datos con un secreto compartido.
 
 ## Mantenimiento y seguridad
 

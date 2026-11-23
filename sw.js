@@ -1,8 +1,8 @@
 /* BMSN — service worker: abre la app al instante y sin señal muestra lo último guardado.
    Nunca guarda nada de Supabase (datos y sesión siempre van directo a la red). */
-const VERSION = "bmsn-v23";
+const VERSION = "bmsn-v24";
 const BASE = [
-  "./", "./index.html", "./app.js?v=23", "./styles.css?v=23", "./config.js?v=23", "./manifest.webmanifest",
+  "./", "./index.html", "./app.js?v=24", "./styles.css?v=24", "./config.js?v=24", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-64.png", "./icons/logo.png",
 ];
 
@@ -44,4 +44,26 @@ self.addEventListener("fetch", (e) => {
       }))
     );
   }
+});
+
+// ---------- Avisos push ----------
+self.addEventListener("push", (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { cuerpo: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.titulo || "BMSN", {
+    body: d.cuerpo || "",
+    icon: "icons/icon-192.png",
+    badge: "icons/favicon-64.png",
+    data: { url: d.url || "./" },
+    tag: d.titulo || "bmsn",
+  }));
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const destino = new URL(e.notification.data?.url || "./", self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((ws) => {
+    for (const w of ws) if (w.url.startsWith(self.registration.scope)) { w.focus(); return w.navigate(destino); }
+    return self.clients.openWindow(destino);
+  }));
 });
