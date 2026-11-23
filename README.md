@@ -32,6 +32,16 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - % casa = veces que puso casa ÷ planes a los que fue
 - Promedio por mes = asistencias ÷ meses con planes
 
+## Instalar como app
+
+BMSN es una app instalable (PWA): icono propio, pantalla completa y abre sin señal con los últimos datos.
+
+- **iPhone / iPad**: abrir el link en Safari → Compartir → *Añadir a pantalla de inicio*.
+- **Android**: Chrome muestra *Instalar app* (o el botón *Instalar* dentro de BMSN).
+- **Computadora**: icono *Instalar* en la barra de direcciones de Chrome o Edge.
+
+En iPhone la app instalada no comparte sesión con Safari: para entrar, copia el enlace del correo (mantener pulsado → Copiar enlace) y pégalo en la pantalla de entrar de la app.
+
 ## Probar sin tocar datos reales
 
 Añade `?demo` a la dirección (`…/BMSN-SCORE/?demo`): carga datos inventados y nada se guarda.

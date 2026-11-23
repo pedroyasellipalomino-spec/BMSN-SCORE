@@ -119,6 +119,21 @@
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
+      async entrarConEnlace(texto) {
+        let u;
+        try { u = new URL(texto.trim()); } catch { throw new Error("Eso no parece un enlace"); }
+        const h = new URLSearchParams(u.hash.slice(1));
+        if (h.get("access_token") && h.get("refresh_token")) {
+          const { error } = await sb.auth.setSession({ access_token: h.get("access_token"), refresh_token: h.get("refresh_token") });
+          if (error) throw error;
+          return;
+        }
+        const token = u.searchParams.get("token_hash") || u.searchParams.get("token");
+        if (!token) throw new Error("Ese enlace no es el del correo de BMSN");
+        const tipo = u.searchParams.get("type") || "magiclink";
+        const { error } = await sb.auth.verifyOtp({ token_hash: token, type: tipo === "signup" ? "signup" : tipo === "magiclink" ? "magiclink" : "email" });
+        if (error) throw new Error(/expired|invalid/i.test(error.message) ? "El enlace venció o ya se usó. Pide uno nuevo." : error.message);
+      },
       salir: () => sb.auth.signOut(),
       alCambiarSesion: (fn) => sb.auth.onAuthStateChange((ev, s) => setTimeout(() => fn(s?.user ?? null), 0)),
     };
@@ -198,6 +213,7 @@
       },
       async entrar(email) { await pausa(); user = { id: "demo", email }; setTimeout(() => listener(user), 300); },
       async salir() { user = null; listener(null); },
+      async entrarConEnlace() { throw new Error("En el modo demo no hace falta: usa Entrar."); },
       alCambiarSesion(fn) { listener = fn; fn(null); },
     };
   }
@@ -282,7 +298,8 @@
     const demo = DEMO ? `<div class="banner"><span>Modo demo: datos inventados, nada se guarda.</span></div>` : "";
     const mig = !S.migracion && S.admin ? bannerError("Falta activar los perfiles: ejecuta <b>supabase/02_perfiles.sql</b> en Supabase.") : "";
     const sinPerfil = S.user && S.migracion && !S.yo && S.cargado ? `<div class="banner"><span>Tu correo aún no está unido a tu perfil.</span><button class="btn chico" data-a="quien-soy">¿Quién eres?</button></div>` : "";
-    $("#vista").innerHTML = demo + mig + err + sinPerfil + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
+    const inst = v === "inicio" ? bannerInstalar() : "";
+    $("#vista").innerHTML = demo + mig + err + sinPerfil + inst + { inicio: vInicio, planes: vPlanes, encuestas: vEncuestas, gente: vGente, admin: vAdmin }[v]();
     document.body.classList.toggle("es-admin", S.admin);
   }
 
@@ -608,7 +625,8 @@
       <form id="f-login">
         <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="email" placeholder="nombre@gmail.com"></label>
         <button class="btn full" type="submit">Enviarme el enlace</button>
-      </form>`);
+      </form>
+      ${APP.standalone ? `<div style="height:16px"></div>${formPegarEnlace()}` : ""}`);
     setTimeout(() => $("#f-login [name=email]")?.focus(), 250);
   }
   function hojaLoginEnviado(email) {
@@ -618,8 +636,61 @@
         <p>Enviamos un enlace a <b style="color:var(--ink)">${esc(email)}</b>.<br>Ábrelo <b style="color:var(--ink)">en este mismo dispositivo</b> para entrar.</p>
         <p style="font-size:13px">¿No llega? Mira en spam o espera un minuto.</p>
       </div>
+      ${formPegarEnlace()}
       <button class="btn sec full" data-a="login">Usar otro correo</button>`);
   }
+  function formPegarEnlace() {
+    return `<form id="f-enlace" class="pegar-enlace ${APP.standalone ? "destacado" : ""}" autocomplete="off">
+      <div class="h3">${APP.standalone ? "📲 Estás en la app" : "¿Usas BMSN como app?"}</div>
+      <p class="sub">${APP.ios ? "En iPhone el enlace se abre en Safari. Para entrar en la app: en el correo <b>mantén pulsado el botón del enlace → Copiar enlace</b> y pégalo aquí." : "Si el enlace se abre en otro sitio, cópialo desde el correo y pégalo aquí."}</p>
+      <div class="form-linea"><input name="enlace" inputmode="url" placeholder="Pega el enlace del correo" required><button class="btn chico" type="submit">Entrar</button></div>
+    </form>`;
+  }
+
+  // ---------- App instalable ----------
+  const APP = {
+    standalone: matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+    ios: /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
+    android: /android/i.test(navigator.userAgent),
+    aviso: null,
+  };
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); APP.aviso = e; render(); });
+  window.addEventListener("appinstalled", () => { APP.aviso = null; toast("BMSN instalada ✓"); render(); });
+  if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  const puedeInstalar = () => !APP.standalone;
+  const leer = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const guardar = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+  function bannerInstalar() {
+    if (!puedeInstalar() || leer("bmsn-sin-banner") || !(APP.ios || APP.android || APP.aviso)) return "";
+    return `<div class="banner instalar"><span class="ico-app"></span><span><b>Instala BMSN</b><br><span class="sub">Ábrela desde tu pantalla de inicio, como una app.</span></span>
+      <button class="btn chico" data-a="instalar">Instalar</button><button class="cerrar chico" data-a="no-banner" aria-label="Ocultar">${ICON.cerrar}</button></div>`;
+  }
+
+  async function instalar() {
+    if (APP.aviso) {
+      APP.aviso.prompt();
+      const r = await APP.aviso.userChoice.catch(() => null);
+      APP.aviso = null;
+      if (r?.outcome === "accepted") guardar("bmsn-sin-banner", "1");
+      return render();
+    }
+    const compartir = `<svg viewBox="0 0 24 24" class="ico-inline"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>`;
+    const pasos = APP.ios
+      ? [[compartir, `Toca <b>Compartir</b> en la barra de Safari${navigator.maxTouchPoints > 1 && !/iphone/i.test(navigator.userAgent) ? " (arriba a la derecha en iPad)" : " (abajo)"}.`],
+         ["＋", `Elige <b>Añadir a pantalla de inicio</b>. Si no aparece, desliza la lista hacia abajo.`],
+         ["✓", `Pulsa <b>Añadir</b>. BMSN aparecerá con su icono junto a tus apps.`]]
+      : APP.android
+        ? [["⋮", "Abre el menú <b>⋮</b> de Chrome (arriba a la derecha)."], ["＋", "Toca <b>Instalar app</b> o <b>Añadir a pantalla de inicio</b>."], ["✓", "Confirma. BMSN quedará en tu cajón de apps."]]
+        : [["⊕", "En Chrome o Edge, pulsa el icono <b>Instalar</b> al final de la barra de direcciones."], ["✓", "Confirma. BMSN se abrirá en su propia ventana."]];
+    abrirHoja(`${cabHoja("Instalar BMSN")}
+      <div class="instalar-cab"><img src="icons/icon-192.png" alt="" width="72" height="72"><div><div class="h3">BMSN</div><div class="sub">Gratis · sin tienda de apps · se actualiza sola</div></div></div>
+      ${APP.ios && !/safari/i.test(navigator.userAgent.replace(/crios|fxios|edgios/i, "x")) ? `<div class="banner error" style="margin-bottom:14px"><span>En iPhone y iPad hay que abrir este link en <b>Safari</b> para poder instalarla.</span></div>` : ""}
+      <ol class="pasos">${pasos.map(([i, t], n) => `<li><span class="paso-n">${i}</span><span>${t}</span></li>`).join("")}</ol>
+      ${APP.ios ? `<p class="sub" style="font-size:13px">Al abrirla por primera vez tendrás que entrar con tu correo otra vez (la app y Safari no comparten la sesión).</p>` : ""}
+      <button class="btn full" data-a="cerrar">Entendido</button>`);
+  }
+
   function hojaCuenta() {
     if (S.yo) return hojaPerfil(S.yo.id);
     abrirHoja(`${cabHoja("Tu cuenta")}
@@ -627,6 +698,7 @@
       <div class="sub">${S.admin ? "Admin de BMSN" : "Miembro"} · sin perfil todavía</div></div></div>
       ${S.migracion ? `<button class="btn full" data-a="quien-soy">Elegir mi perfil</button><div style="height:10px"></div>` : ""}
       ${S.admin ? `<button class="btn sec full" data-a="ir-admin">⚙ Panel de admin</button><div style="height:10px"></div>` : ""}
+      ${puedeInstalar() ? `<button class="btn linea full" data-a="instalar">📲 Instalar BMSN como app</button><div style="height:10px"></div>` : ""}
       <button class="btn linea full" data-a="salir">Cerrar sesión</button>`);
   }
 
@@ -700,6 +772,7 @@
         ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
       </div>
       ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
+      ${propio && puedeInstalar() ? `<button class="btn linea full" style="margin-top:10px" data-a="instalar">📲 Instalar BMSN como app</button>` : ""}
       ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
         ${p.user_id ? `<button class="btn sec" data-a="desvincular" data-id="${id}">Soltar cuenta</button>` : ""}
         <button class="btn peligro" data-a="borrar-persona" data-id="${id}">Borrar</button></div>` : ""}`);
@@ -916,6 +989,8 @@
     "nueva-persona-rapida": () => { guardarCampos(); hojaNuevaPersona(true); },
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
     "quien-soy": () => hojaQuienSoy(),
+    instalar: () => instalar(),
+    "no-banner": () => { guardar("bmsn-sin-banner", "1"); render(); },
     "vista-planes": (d) => { S.vistaPlanes = d.v; render(); },
     "cal-mover": (d) => {
       const [y, m] = (S.calMes || mesActual()).split("-").map(Number);
@@ -1044,6 +1119,12 @@
       }
       btn.disabled = false; f.nombre.focus();
     }
+    if (f.id === "f-enlace") {
+      btn.disabled = true; btn.textContent = "…";
+      try { await api.entrarConEnlace(f.enlace.value); cerrarHoja(); }
+      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar"; }
+      return;
+    }
     if (f.id === "f-admin") {
       const email = f.email.value.trim().toLowerCase();
       if (S.emailsAdmin.includes(email)) return toast("Ya es admin", true);
@@ -1110,5 +1191,10 @@
     }
     await cargar();
     if (S.user && S.migracion && !S.yo && !S.errorCarga) hojaQuienSoy();
+    else if (new URLSearchParams(location.search).get("accion") === "nuevo") {
+      const q = new URLSearchParams(location.search); q.delete("accion");
+      history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
+      acciones["nuevo-plan"]();
+    }
   });
 })();

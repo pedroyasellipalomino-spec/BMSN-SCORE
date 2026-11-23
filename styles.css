@@ -609,3 +609,26 @@ body.es-admin .btn-admin-top { display: grid; }
 @media (min-width: 700px) { .acciones-admin { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (min-width: 1024px) { .admin-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px; align-items: start; } }
 .flechas .lbl.cal-mes { text-transform: uppercase; }
+
+/* ---------- App instalable ---------- */
+.banner.instalar { gap: 12px; }
+.banner.instalar > span:nth-child(2) { flex: 1; line-height: 1.3; }
+.banner.instalar .sub { font-size: 12.5px; }
+.ico-app { width: 40px; height: 40px; border-radius: 10px; flex: none; background: url(icons/icon-192.png) center / cover; box-shadow: 0 0 0 1px var(--line); }
+.cerrar.chico { width: 28px; height: 28px; flex: none; }
+.cerrar.chico svg { width: 13px; height: 13px; }
+.instalar-cab { display: flex; gap: 14px; align-items: center; margin-bottom: 20px; }
+.instalar-cab img { border-radius: 18px; box-shadow: 0 0 0 1px var(--line); }
+.pasos { list-style: none; padding: 0; margin: 0 0 20px; display: grid; gap: 12px; }
+.pasos li { display: flex; gap: 14px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; font-size: 15px; color: var(--ink-2); }
+.pasos li b { color: var(--ink); }
+.paso-n { width: 38px; height: 38px; border-radius: 10px; flex: none; display: grid; place-items: center; background: var(--neon); color: var(--on-neon); font-weight: 800; font-size: 18px; }
+.paso-n .ico-inline { width: 20px; height: 20px; stroke-width: 2.2; }
+.pegar-enlace { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; margin-bottom: 12px; display: grid; gap: 8px; }
+.pegar-enlace.destacado { border-color: var(--neon); }
+.pegar-enlace .sub { font-size: 13px; margin: 0; }
+.pegar-enlace .sub b { color: var(--ink); }
+/* En modo app (pantalla completa) respeta la muesca y la barra de estado */
+@media (display-mode: standalone) {
+  .top { padding-top: calc(env(safe-area-inset-top, 0px) + 10px); }
+}
