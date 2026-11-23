@@ -462,7 +462,108 @@
             <span class="der"><div class="big">${val(r)}</div></span>
           </button>`).join("")}</div>` : "")
         : `<div class="vacio"><p>No hay planes en este periodo.</p><button class="btn solo-gestion" data-a="nuevo-plan">＋ Anotar un plan</button></div>`}
-      </div></div>`;
+      </div></div>${masEstadisticas(planes)}`;
+  }
+
+
+  // ---------- Más estadísticas ----------
+  const DIAS_L = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+  const diaIdx = (f) => (new Date(f + "T12:00:00Z").getUTCDay() + 6) % 7; // 0 = lunes
+
+  function periodoAnterior() {
+    const { tipo, valor } = S.periodo;
+    if (tipo === "mes") return { valor: sumarDias(valor + "-01", -1).slice(0, 7), etiqueta: nombreMes(sumarDias(valor + "-01", -1).slice(0, 7)) };
+    if (tipo === "anio") return { valor: String(+valor - 1), etiqueta: String(+valor - 1) };
+    return null;
+  }
+  function resumen(planes) {
+    const gente = new Set(planes.flatMap((x) => x.asistentes));
+    return {
+      planes: planes.length,
+      prom: planes.length ? planes.reduce((a, x) => a + x.asistentes.length, 0) / planes.length : 0,
+      casas: planes.filter((x) => x.anfitrion).length,
+      gente: gente.size,
+    };
+  }
+  function duplas(planes, limite = 5) {
+    const c = {};
+    planes.forEach((x) => {
+      const a = [...x.asistentes].sort();
+      for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) { const k = a[i] + "|" + a[j]; c[k] = (c[k] || 0) + 1; }
+    });
+    return Object.entries(c).sort((a, b) => b[1] - a[1]).slice(0, limite).map(([k, n]) => ({ a: persona(k.split("|")[0]), b: persona(k.split("|")[1]), n }))
+      .filter((d) => d.a && d.b);
+  }
+
+  function masEstadisticas(planes) {
+    if (!planes.length) return "";
+    const aprox = planes.some((x) => x.importado);
+    const notaAprox = aprox ? `<p class="ayuda" style="margin:10px 0 0">≈ Incluye meses importados: aproximado.</p>` : "";
+
+    // Días de la semana (las fechas son exactas, también en los importados)
+    const dias = Array(7).fill(0); planes.forEach((x) => dias[diaIdx(x.fecha)]++);
+    const maxD = Math.max(1, ...dias), topD = dias.indexOf(Math.max(...dias));
+    const cDias = `<div class="est-card"><div class="cab"><span class="eyebrow">Días de la semana</span><span class="sub">más: ${DIAS_L[topD].toLowerCase()}</span></div>
+      <div class="est-dias">${dias.map((n, i) => `<div class="est-dia ${i === topD ? "maximo" : ""}"><span class="n">${n || ""}</span><i style="height:${(n / maxD) * 100}%"></i><span class="d">${DIAS_L[i].slice(0, 1)}</span></div>`).join("")}</div></div>`;
+
+    // Dónde se hace
+    const casas = {}; let fuera = 0;
+    planes.forEach((x) => (x.anfitrion ? (casas[x.anfitrion] = (casas[x.anfitrion] || 0) + 1) : fuera++));
+    const lista = Object.entries(casas).sort((a, b) => b[1] - a[1]).map(([id, n]) => ({ p: persona(id), n })).filter((x) => x.p);
+    const top = lista.slice(0, 5), resto = lista.slice(5).reduce((a, x) => a + x.n, 0);
+    const PALETA = ["var(--neon)", "var(--accent)", "#7c6cff", "#ffb02e", "#ff5c9e"];
+    const segs = [...top.map((x, i) => ({ nombre: x.p.nombre, n: x.n, c: PALETA[i] })), ...(resto ? [{ nombre: "Otras casas", n: resto, c: "var(--borde-2)" }] : []), ...(fuera ? [{ nombre: "Fuera de casa", n: fuera, c: "var(--barra)" }] : [])];
+    const color = (x) => x;
+    const cCasas = `<div class="est-card"><div class="cab"><span class="eyebrow">Dónde se hace</span><span class="sub">${planes.length} planes</span></div>
+      <div class="est-barra">${segs.map((x) => `<i style="flex:${x.n};background:${color(x.c)}" title="${esc(x.nombre)}: ${x.n}"></i>`).join("")}</div>
+      <div class="est-leyenda">${segs.map((x) => `<span><i style="background:${color(x.c)}"></i>${esc(x.nombre)} <b>${Math.round((x.n / planes.length) * 100)}%</b></span>`).join("")}</div></div>`;
+
+    // Duplas
+    const ds = duplas(planes);
+    const cDuplas = ds.length ? `<div class="est-card"><div class="cab"><span class="eyebrow">Las duplas</span><span class="sub">planes juntos</span></div>
+      <div class="est-duplas">${ds.map((d, i) => `<div class="est-dupla"><span class="pos">${i + 1}</span><span class="pila">${avatar(d.a, "sm")}${avatar(d.b, "sm")}</span>
+        <span class="nom">${esc(d.a.nombre.split(" ")[0])} & ${esc(d.b.nombre.split(" ")[0])}</span><b>${d.n}</b></div>`).join("")}</div>${notaAprox}</div>` : "";
+
+    // Comparativa con el periodo anterior
+    let cComp = "";
+    const ant = periodoAnterior();
+    const planesAnt = ant ? S.planes.filter((x) => x.fecha.startsWith(ant.valor)) : [];
+    if (ant && planesAnt.length) {
+      const a = resumen(planes), b = resumen(planesAnt);
+      const fila = (et, x, y, fmt = (v) => v) => {
+        const d = x - y; const cls = d > 0.05 ? "sube" : d < -0.05 ? "baja" : "igual";
+        return `<div class="est-comp-fila"><span>${et}</span><b>${fmt(x)}</b><span class="delta ${cls}">${cls === "sube" ? "▲" : cls === "baja" ? "▼" : "="} ${y ? fmt(y) : "—"}</span></div>`;
+      };
+      cComp = `<div class="est-card"><div class="cab"><span class="eyebrow">Frente a ${esc(ant.etiqueta)}</span></div>
+        ${fila("Planes", a.planes, b.planes)}${fila("Personas por plan", a.prom, b.prom, dec)}${fila("En casa de alguien", a.casas, b.casas)}${fila("Gente distinta", a.gente, b.gente)}</div>`;
+    }
+    return `<div class="seccion"><div class="cab"><span class="eyebrow">Más estadísticas</span></div><div class="est-grid">${cComp}${cDias}${cCasas}${cDuplas}</div></div>`;
+  }
+
+  // Gráfico mes a mes, mejor compañía y día favorito en el perfil
+  function estadisticasPerfil(p) {
+    const meses = [...new Set(S.planes.map((x) => x.fecha.slice(0, 7)))].sort().slice(-12);
+    if (!meses.length) return "";
+    const filas = meses.map((m) => {
+      const del = S.planes.filter((x) => x.fecha.startsWith(m) && (esMiembroEn(p, x.fecha) || x.asistentes.includes(p.id)));
+      return { m, total: del.length, fue: del.filter((x) => x.asistentes.includes(p.id)).length };
+    });
+    const max = Math.max(1, ...filas.map((f) => f.total));
+    const mios = S.planes.filter((x) => x.asistentes.includes(p.id));
+    const comp = {};
+    mios.forEach((x) => x.asistentes.forEach((o) => { if (o !== p.id) comp[o] = (comp[o] || 0) + 1; }));
+    const top = Object.entries(comp).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id, n]) => ({ q: persona(id), n })).filter((x) => x.q);
+    const dias = Array(7).fill(0); mios.forEach((x) => dias[diaIdx(x.fecha)]++);
+    const fav = mios.length ? dias.indexOf(Math.max(...dias)) : -1;
+    const aprox = mios.some((x) => x.importado);
+    return `<div class="seccion" style="margin-top:24px"><div class="cab"><span class="eyebrow">Mes a mes</span><span class="sub">fue / planes</span></div>
+      <div class="est-meses">${filas.map((f) => `<div class="est-mes" title="${nombreMes(f.m)}: ${f.fue} de ${f.total}">
+        <span class="n">${f.total ? f.fue : ""}</span><span class="col"><i class="tot" style="height:${(f.total / max) * 100}%"></i><i class="fue" style="height:${(f.fue / max) * 100}%"></i></span>
+        <span class="d">${MESES[+f.m.slice(5) - 1].slice(0, 1).toUpperCase()}</span></div>`).join("")}</div>
+      <div class="est-perfil-extra">
+        ${top.length ? `<div><span class="eyebrow">Mejor compañía</span><div class="est-comp">${top.map((x) => `<span>${avatar(x.q, "sm")}<b>${esc(x.q.nombre.split(" ")[0])}</b><span class="sub">${x.n}</span></span>`).join("")}</div></div>` : ""}
+        ${fav >= 0 ? `<div><span class="eyebrow">Día favorito</span><div class="est-fav">${["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"][fav]}</div></div>` : ""}
+      </div>${aprox ? `<p class="ayuda" style="margin:10px 0 0">≈ Con meses importados, la compañía es aproximada.</p>` : ""}</div>`;
   }
 
   function resumenMeses() {
@@ -1251,6 +1352,7 @@
         <div class="stat"><b>${r.racha}</b><span>racha actual</span></div>
         <div class="stat"><b>${votos}</b><span>${votos === 1 ? "encuesta votada" : "encuestas votadas"}</span></div>
       </div>
+      ${estadisticasPerfil(p)}
       ${seccionLogros(p)}
       <div class="seccion" style="margin-top:24px"><div class="cab"><span class="eyebrow">Actividad</span><span class="sub">${dec(r.promMes)} planes/mes</span></div>
         ${lista.length ? `<div class="timeline">${lista.map((x) => `<${x.a ? `button data-a="${x.a}" data-id="${x.id}"` : "div"} class="ev">
