@@ -5,7 +5,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Cómo está montado
 
 - **Página**: HTML + JS estático (`index.html`, `app.js`, `styles.css`).
-- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql` y `06_nominados.sql`.
+- **Base de datos y verificación de correos**: [Supabase](https://supabase.com) (plan gratis). Ejecuta en orden `supabase/esquema.sql`, `supabase/02_perfiles.sql` y `supabase/03_fotos_admin.sql`, `04_clave_grupo.sql`, `05_miembro_desde.sql`, `06_nominados.sql` y `07_tema.sql`.
 - **Conexión**: `config.js` lleva la URL del proyecto y la clave pública `anon`. La seguridad la ponen las reglas RLS del esquema.
 
 ## Permisos
@@ -19,6 +19,10 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 - Cada correo que entra elige quién es: si escribe un nombre que ya existe, su cuenta se une a ese perfil con todas sus estadísticas; si no, se crea uno nuevo.
 - Cada miembro edita su propio perfil (nombre, emoji, color y frase). El admin puede editar cualquiera y soltar una cuenta de un perfil equivocado.
 - El perfil muestra asistencia, veces que puso casa, racha, encuestas votadas y el historial de actividad. Qué votó cada uno solo lo ve esa persona (y el admin).
+
+## Temas
+
+Cada miembro elige su tema con el botón 🎨: **Neón**, **Vice City**, **Escudo**, **Océano** o **Día** (claro). Con sesión iniciada se guarda en su perfil y le sigue en todos sus aparatos.
 
 ## Ganador del mes (encuestas en dos fases)
 

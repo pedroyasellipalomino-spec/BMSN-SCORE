@@ -34,6 +34,24 @@
     der: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
   };
 
+  // ---------- Temas ----------
+  const TEMAS = [
+    { id: "neon", nombre: "Neón", desc: "Negro y verde lima", bg: "#0b0b0c", c1: "#c8ff2e", c2: "#ff5c2b", ink: "#f4f4ef" },
+    { id: "vice", nombre: "Vice City", desc: "Atardecer de Miami", bg: "linear-gradient(160deg,#2a0d45,#140821 55%,#3b1430)", c1: "#ff3ea5", c2: "#23e5d6", ink: "#fff3f8" },
+    { id: "escudo", nombre: "Escudo", desc: "Dorado y plata", bg: "#0b0f16", c1: "#e6c46b", c2: "#9fb8d9", ink: "#f1f3f6" },
+    { id: "oceano", nombre: "Océano", desc: "Cian y coral", bg: "#04121f", c1: "#2ee6ff", c2: "#ff7a59", ink: "#eaf6ff" },
+    { id: "dia", nombre: "Día", desc: "Claro", bg: "#f5f3ee", c1: "#ff4d2e", c2: "#2b59ff", ink: "#141414" },
+  ];
+  const FONDO_META = { neon: "#0b0b0c", vice: "#140821", escudo: "#0b0f16", oceano: "#04121f", dia: "#f5f3ee" };
+  function aplicarTema(id) {
+    if (!TEMAS.some((t) => t.id === id)) id = "neon";
+    if (id === "neon") delete document.documentElement.dataset.tema; else document.documentElement.dataset.tema = id;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", FONDO_META[id]);
+    try { localStorage.setItem("bmsn-tema", id); } catch {}
+    return id;
+  }
+  const temaActual = () => document.documentElement.dataset.tema || "neon";
+
   let toastTimer;
   function toast(msg, error = false) {
     const t = $("#toast");
@@ -77,10 +95,10 @@
     return {
       async cargar() {
         let migracion = true, fotos = true;
-        let conDesde = true;
+        let conDesde = true, conTema = false;
         const personasQ = sb.from("personas").select("*").order("nombre").then((r) => {
           const f = r.data?.[0];
-          if (f) { migracion = "user_id" in f; fotos = "foto" in f; conDesde = "desde" in f; }
+          if (f) { migracion = "user_id" in f; fotos = "foto" in f; conDesde = "desde" in f; conTema = "tema" in f; }
           return r;
         });
         const opcional = (p) => p.then((r) => r.data || []);
@@ -98,7 +116,7 @@
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -123,6 +141,7 @@
       crearEncuesta: (e) => q(sb.from("encuestas").insert(e)),
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
+      ponerTema: (tema) => q(sb.rpc("poner_tema", { p_tema: tema })),
       votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
       cerrarEncuesta: (id) => q(sb.from("encuestas").update({ cerrada: true }).eq("id", id)),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
@@ -174,7 +193,7 @@
           votantes: Object.entries(votos).map(([e, o]) => ({ encuesta_id: e, n: Math.max(0, ...Object.values(o)) + (mio[e] ? 1 : 0) })), nominados: true,
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, claveGrupo: true, conDesde: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
@@ -213,6 +232,7 @@
         mio[id] = { opciones, fecha: new Date().toISOString() };
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
+      async ponerTema() {},
       async cerrarEncuesta(id) { encuestas.find((e) => e.id === id).cerrada = true; },
       async entrar() { await pausa(); },
       async salir() { user = null; listener(null); },
@@ -249,8 +269,10 @@
       S.fotos = d.fotos !== false;
       S.emailsAdmin = d.emailsAdmin || [];
       S.conDesde = d.conDesde !== false;
+      S.conTema = !!d.conTema;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
       S.yo = S.user ? S.personas.find((p) => p.user_id && p.user_id === S.user.id) || null : null;
+      if (S.yo?.tema && S.yo.tema !== temaActual()) aplicarTema(S.yo.tema);
       S.votosAdmin = S.admin ? d.votos : [];
       S.errorCarga = null;
     } catch (e) {
@@ -803,6 +825,17 @@
       <button class="btn full" data-a="cerrar">Entendido</button>`);
   }
 
+  function hojaTemas() {
+    const actual = temaActual();
+    abrirHoja(`${cabHoja("Tema", "Cada uno elige el suyo")}
+      <p class="sub" style="margin:-6px 0 18px">${S.yo && S.conTema ? "Se guarda en tu perfil: lo verás igual en todos tus aparatos." : "Se guarda en este aparato."}</p>
+      <div class="temas">${TEMAS.map((t) => `<button class="tema-op ${t.id === actual ? "on" : ""}" data-a="tema" data-v="${t.id}">
+        <span class="tema-muestra" style="background:${t.bg}"><span class="num" style="color:${t.c1}">26</span>
+          <span class="bola" style="background:${t.c1}"></span><span class="bola" style="background:${t.c2}"></span><span class="bola" style="background:${t.ink}"></span></span>
+        <span class="info"><b>${t.nombre}</b><span>${t.desc}</span></span><span class="ok">✓</span></button>`).join("")}</div>
+      <div style="height:16px"></div><button class="btn full" data-a="cerrar">Listo</button>`);
+  }
+
   function hojaCuenta() {
     if (S.yo) return hojaPerfil(S.yo.id);
     abrirHoja(`${cabHoja("Tu cuenta")}
@@ -810,6 +843,7 @@
       <div class="sub">${S.admin ? "Admin de BMSN" : "Miembro"} · sin perfil todavía</div></div></div>
       ${S.migracion ? `<button class="btn full" data-a="quien-soy">Elegir mi perfil</button><div style="height:10px"></div>` : ""}
       ${S.admin ? `<button class="btn sec full" data-a="ir-admin">⚙ Panel de admin</button><div style="height:10px"></div>` : ""}
+      <button class="btn linea full" data-a="temas">🎨 Cambiar tema</button><div style="height:10px"></div>
       ${puedeInstalar() ? `<button class="btn linea full" data-a="instalar">📲 Instalar BMSN como app</button><div style="height:10px"></div>` : ""}
       <button class="btn linea full" data-a="salir">Cerrar sesión</button>`);
   }
@@ -888,6 +922,7 @@
         ${propio ? `<button class="btn linea" data-a="salir">Cerrar sesión</button>` : ""}
       </div>
       ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
+      ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="temas">🎨 Cambiar tema</button>` : ""}
       ${propio && puedeInstalar() ? `<button class="btn linea full" style="margin-top:10px" data-a="instalar">📲 Instalar BMSN como app</button>` : ""}
       ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
         ${p.user_id ? `<button class="btn sec" data-a="desvincular" data-id="${id}">Soltar cuenta</button>` : ""}
@@ -1122,6 +1157,14 @@
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
     "quien-soy": () => hojaQuienSoy(),
     instalar: () => instalar(),
+    temas: () => hojaTemas(),
+    tema: async (d) => {
+      const id = aplicarTema(d.v);
+      const y = hoja.scrollTop; hojaTemas(); hoja.scrollTop = y;
+      if (S.yo && S.conTema) {
+        try { await api.ponerTema(id); S.yo.tema = id; } catch (e) { toast(msgError(e), true); }
+      }
+    },
     "modo-login": (d) => hojaLogin("", d.v),
     reenviar: async (d) => {
       try { await api.entrar(d.v); toast("Código nuevo enviado"); hojaCodigo(d.v); }
