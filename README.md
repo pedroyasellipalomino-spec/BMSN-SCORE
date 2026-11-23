@@ -29,7 +29,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Logros y BMSN Wrapped
 
 - **Logros** con niveles en cada perfil: planes, rachas, casas, meses perfectos, maratón, votos, Jugador del mes, cumpleaños y "De los de siempre".
-- **BMSN Wrapped**: el resumen del año en pantallas tipo historia (tarjeta en Inicio, botón en el perfil o `#wrapped`).
+- **BMSN Wrapped**: el resumen del año en pantallas tipo historia. Se publica el **29 de diciembre** y se puede ver hasta el 31 de enero (el admin lo ve antes como vista previa). En años con meses importados no incluye el "plan del año".
 
 ## Avisos push
 

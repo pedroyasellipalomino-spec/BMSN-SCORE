@@ -437,9 +437,10 @@
     const resto = top.length === 3 ? rk.slice(3) : rk;
     const g = ganadores()[0];
     const cartel = g && g.mes >= sumarDias(mesActual() + "-01", -45).slice(0, 7) ? `<button class="ganador-cartel mini" data-a="ver-encuesta" data-id="${g.e.id}">${g.nombres.map((n) => avatar(personaPorNombre(n) || { nombre: n })).join("")}<div><span class="eyebrow">🏆 Jugador de ${MESES[+g.mes.slice(5) - 1]}</span><div class="h3">${esc(g.nombres.join(" y "))}</div></div></button>` : "";
-    const anioW = hoy().slice(0, 4);
-    const nW = S.planes.filter((x) => x.fecha.startsWith(anioW)).length;
-    const tarjetaW = nW >= 5 ? `<button class="wrapped-tarjeta" data-a="wrapped" data-v="${anioW}"><span class="wt-ic">🎁</span><span><span class="eyebrow">Ya disponible</span><b>BMSN Wrapped ${anioW}</b><span class="sub">Tu año en planes, en 1 minuto</span></span><span class="wt-flecha">→</span></button>` : "";
+    const dispW = wrappedDisponible();
+    const anioW = dispW?.anio;
+    const nW = dispW ? S.planes.filter((x) => x.fecha.startsWith(anioW)).length : 0;
+    const tarjetaW = nW >= 5 ? `<button class="wrapped-tarjeta" data-a="wrapped" data-v="${anioW}"><span class="wt-ic">🎁</span><span><span class="eyebrow">${dispW?.publico ? "Ya disponible" : "Vista previa · solo admin · sale el 29 dic"}</span><b>BMSN Wrapped ${anioW}</b><span class="sub">Tu año en planes, en 1 minuto</span></span><span class="wt-flecha">→</span></button>` : "";
     return cartel + tarjetaW + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
@@ -738,7 +739,7 @@
       ${podio(d.anfitriones, (r) => `🏠 ${r.casas} ${r.casas === 1 ? "casa" : "casas"}`)}</div>`);
     if (d.racha?.n) P.push(`<div class="w-pant"><div class="w-eyebrow">La racha más larga</div>${avatar(d.racha.p, "xl w-av")}<div class="w-numero">${d.racha.n}</div>
       <div class="w-sub">planes seguidos sin fallar</div><div class="w-frase"><b>${esc(d.racha.p.nombre)}</b> no se perdió ni uno.</div>${nota}</div>`);
-    if (d.masGente) P.push(`<div class="w-pant w-acento"><div class="w-eyebrow">El plan del año</div><div class="w-titulo chico">${esc(d.masGente.titulo)}</div>
+    if (d.masGente && !d.planes.some((x) => x.importado)) P.push(`<div class="w-pant w-acento"><div class="w-eyebrow">El plan del año</div><div class="w-titulo chico">${esc(d.masGente.titulo)}</div>
       <div class="w-numero">${d.masGente.asistentes.length}</div><div class="w-sub">personas · ${diaSemana(d.masGente.fecha)} ${fechaCorta(d.masGente.fecha)}</div>
       <div class="pila w-pila">${d.masGente.asistentes.map(persona).filter(Boolean).slice(0, 10).map((g) => avatar(g)).join("")}</div>${nota}</div>`);
     if (d.jugadores.length) P.push(`<div class="w-pant"><div class="w-eyebrow">🏆 Jugadores del mes</div><div class="w-lista">${d.jugadores.map((g) =>
@@ -758,8 +759,20 @@
     return P;
   }
 
+  // ¿Qué Wrapped hay disponible hoy? { anio, publico } o null. El admin puede verlo antes como vista previa.
+  function wrappedDisponible() {
+    const h = hoy(), anio = h.slice(0, 4), md = h.slice(5);
+    if (md >= "12-29") return { anio, publico: true };
+    if (md <= "01-31") return { anio: String(+anio - 1), publico: true };
+    if (S.admin) return { anio, publico: false };
+    return null;
+  }
+
   let wrapped = null;
-  function abrirWrapped(anio = hoy().slice(0, 4)) {
+  function abrirWrapped(anio) {
+    const disp = wrappedDisponible();
+    if (!disp) return toast("El BMSN Wrapped sale el 29 de diciembre 🎁");
+    anio = anio || disp.anio;
     const d = datosWrapped(anio);
     if (!d.planes.length) return toast(`No hay planes en ${anio}`, true);
     wrapped = { pantallas: pantallasWrapped(d), i: 0 };
@@ -1251,7 +1264,7 @@
       </div>
       ${propio && S.admin ? `<button class="btn sec full" style="margin-top:10px" data-a="ir-admin">⚙ Panel de admin</button>` : ""}
       ${propio && botonAvisos() ? `<div style="margin-top:10px">${botonAvisos()}</div>` : ""}
-      ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="wrapped">🎁 Ver mi BMSN Wrapped</button>` : ""}
+      ${propio && wrappedDisponible() ? `<button class="btn linea full" style="margin-top:10px" data-a="wrapped">🎁 ${wrappedDisponible().publico ? "Ver mi BMSN Wrapped" : "Vista previa del Wrapped (sale el 29 dic)"}</button>` : ""}
       ${propio ? `<button class="btn linea full" style="margin-top:10px" data-a="temas">🎨 Cambiar tema</button>` : ""}
       ${propio && puedeInstalar() ? `<button class="btn linea full" style="margin-top:10px" data-a="instalar">📲 Instalar BMSN como app</button>` : ""}
       ${S.admin && !propio ? `<div class="acciones-pie" style="margin-top:10px">
