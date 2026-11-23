@@ -11,7 +11,7 @@ Herramienta personal para anotar quién va a cada plan, quién puso casa y ver l
 ## Permisos
 
 - **Admin** (solo tú): la primera cuenta que entra en la página queda como admin. Puede anotar planes, personas y encuestas, y ver quién votó qué.
-- **Cualquiera con correo**: entra con un enlace que llega a su correo y vota. Un voto por correo y encuesta (si vuelve a votar, cambia su voto). Solo se vota durante el mes de la encuesta (zona horaria `America/Lima`, se cambia en `esquema.sql` y en `app.js`).
+- **Cualquiera con correo**: entra con un código de 6 dígitos que llega a su correo (o con la contraseña del grupo) y vota. Un voto por correo y encuesta (si vuelve a votar, cambia su voto). Solo se vota durante el mes de la encuesta (zona horaria `America/Lima`, se cambia en `esquema.sql` y en `app.js`).
 - **Público**: ve los promedios y los resultados de las encuestas (solo conteos, nunca los correos).
 
 ## Perfiles
@@ -40,7 +40,7 @@ BMSN es una app instalable (PWA): icono propio, pantalla completa y abre sin se�
 - **Android**: Chrome muestra *Instalar app* (o el botón *Instalar* dentro de BMSN).
 - **Computadora**: icono *Instalar* en la barra de direcciones de Chrome o Edge.
 
-En iPhone la app instalada no comparte sesión con Safari: para entrar, copia el enlace del correo (mantener pulsado → Copiar enlace) y pégalo en la pantalla de entrar de la app.
+Para entrar se usa un código de 6 dígitos que llega por correo (o la contraseña del grupo), así que funciona igual en Safari y en la app instalada.
 
 ## Probar sin tocar datos reales
 

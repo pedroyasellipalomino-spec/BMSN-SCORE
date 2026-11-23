@@ -124,28 +124,6 @@
       borrarEncuesta: (id) => q(sb.from("encuestas").delete().eq("id", id)),
       votar: (id, opcion) => q(sb.rpc("votar", { p_encuesta: id, p_opcion: opcion })),
       entrar: async (email) => { const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } }); if (error) throw error; },
-      async entrarConEnlace(texto) {
-        let u;
-        try { u = new URL(texto.trim()); } catch { throw new Error("Eso no parece un enlace"); }
-        const h = new URLSearchParams(u.hash.slice(1));
-        if (h.get("access_token") && h.get("refresh_token")) {
-          const { error } = await sb.auth.setSession({ access_token: h.get("access_token"), refresh_token: h.get("refresh_token") });
-          if (error) throw error;
-          return;
-        }
-        const token = u.searchParams.get("token_hash") || u.searchParams.get("token");
-        if (!token) throw new Error("Ese enlace no es el del correo de BMSN");
-        const tipo = u.searchParams.get("type") || "magiclink";
-        const { error } = await sb.auth.verifyOtp({ token_hash: token, type: tipo === "signup" ? "signup" : tipo === "magiclink" ? "magiclink" : "email" });
-        if (error) throw new Error(/expired|invalid/i.test(error.message) ? "El enlace venció o ya se usó. Pide uno nuevo." : error.message);
-      },
-      async entrarConClave(email, clave) {
-        const pass = normalizarClave(clave);
-        await q(sb.rpc("entrar_grupo", { p_email: email, p_clave: pass }));
-        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
-        if (error) throw error;
-      },
-      ponerClaveGrupo: (clave) => q(sb.rpc("poner_clave_grupo", { p_clave: normalizarClave(clave) })),
       async entrarConCodigo(email, codigo) {
         const { error } = await sb.auth.verifyOtp({ email, token: codigo, type: "email" });
         if (error) throw new Error(/expired|invalid/i.test(error.message) ? "Código incorrecto o vencido. Pide uno nuevo." : error.message);
@@ -227,15 +205,17 @@
         votos[id][opcion] = (votos[id][opcion] || 0) + 1;
         mio[id] = { opcion, fecha: new Date().toISOString() };
       },
-      async entrar(email) { await pausa(); user = { id: "demo", email }; setTimeout(() => listener(user), 300); },
+      async entrar() { await pausa(); },
       async salir() { user = null; listener(null); },
-      async entrarConEnlace() { throw new Error("En el modo demo no hace falta: usa Entrar."); },
       async entrarConClave(email, clave) {
         if (normalizarClave(clave) !== "demo bmsn") throw new Error("Contraseña del grupo incorrecta");
         user = { id: "demo", email }; setTimeout(() => listener(user), 200);
       },
       async ponerClaveGrupo() {},
-      async entrarConCodigo(email) { user = { id: "demo", email }; setTimeout(() => listener(user), 200); },
+      async entrarConCodigo(email, codigo) {
+        if (codigo !== "123456") throw new Error("Código incorrecto o vencido. En la demo el código es 123456.");
+        user = { id: "demo", email }; setTimeout(() => listener(user), 200);
+      },
       alCambiarSesion(fn) { listener = fn; fn(null); },
     };
   }
@@ -656,14 +636,14 @@
   let modoLogin = null;
   function hojaLogin(motivo = "", modo) {
     const conClave = S.claveGrupo === true;
-    modoLogin = modo || modoLogin || (conClave ? "clave" : "enlace");
-    if (!conClave) modoLogin = "enlace";
+    modoLogin = modo || modoLogin || "codigo";
+    if (!conClave) modoLogin = "codigo";
     const correo = esc(leer("bmsn-correo") || "");
     abrirHoja(`${cabHoja("Entrar")}
       ${motivo ? `<p class="sub" style="margin:-6px 0 16px">${motivo}</p>` : ""}
       ${conClave ? `<div class="seg seg-full" style="margin-bottom:18px">
-        <button class="${modoLogin === "clave" ? "on" : ""}" data-a="modo-login" data-v="clave">Contraseña del grupo</button>
-        <button class="${modoLogin === "enlace" ? "on" : ""}" data-a="modo-login" data-v="enlace">Enlace por correo</button></div>` : ""}
+        <button class="${modoLogin === "codigo" ? "on" : ""}" data-a="modo-login" data-v="codigo">Código por correo</button>
+        <button class="${modoLogin === "clave" ? "on" : ""}" data-a="modo-login" data-v="clave">Contraseña del grupo</button></div>` : ""}
       ${modoLogin === "clave" ? `
       <form id="f-clave" autocomplete="on">
         <p class="sub" style="margin:0 0 16px">Escribe tu correo y la contraseña del grupo. Entras al momento, sin verificar nada.</p>
@@ -672,34 +652,51 @@
         <p class="ayuda" style="margin:-8px 0 16px">Da igual mayúsculas, tildes o espacios.</p>
         <button class="btn full" type="submit">Entrar</button>
       </form>` : `
-      <p class="sub" style="margin:0 0 16px">Te enviamos un enlace a tu correo. Sin contraseñas.</p>
+      <p class="sub" style="margin:0 0 16px">Te enviamos a tu correo un código de 6 dígitos. Sin contraseñas.</p>
       <form id="f-login">
         <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="email" placeholder="nombre@gmail.com" value="${correo}"></label>
-        <button class="btn full" type="submit">Enviarme el enlace</button>
-      </form>
-      ${APP.standalone ? `<div style="height:16px"></div>${formPegarEnlace()}` : ""}`}`);
-    setTimeout(() => { const i = $(correo ? "#hoja [name=clave], #f-login [name=email]" : "#hoja [name=email]"); i?.focus(); }, 250);
+        <button class="btn full" type="submit">Enviarme el código</button>
+      </form>`}`);
+    setTimeout(() => $(modoLogin === "clave" && correo ? "#hoja [name=clave]" : "#hoja [name=email]")?.focus(), 250);
   }
-  function hojaLoginEnviado(email) {
+
+  // Pantalla del código: 6 cajas, se envía solo al completar, reenvío con cuenta atrás.
+  let reenvioTimer;
+  function hojaCodigo(email) {
     abrirHoja(`${cabHoja("Revisa tu correo")}
-      <div class="vacio" id="login-enviado" style="padding:10px 0">
-        <div class="display" style="font-size:60px">✉︎</div>
-        <p>Enviamos un correo a <b style="color:var(--ink)">${esc(email)}</b>.<br>Escribe el código o abre el enlace <b style="color:var(--ink)">en este mismo dispositivo</b>.</p>
-      </div>
+      <p class="sub" style="margin:-6px 0 20px">Escribe el código de 6 dígitos que enviamos a <b style="color:var(--ink)">${esc(email)}</b>.</p>
       <form id="f-codigo" data-email="${esc(email)}" autocomplete="off">
-        <label class="campo"><span>Código del correo</span><input name="codigo" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" class="input-codigo"></label>
-        <button class="btn full" type="submit">Entrar con el código</button>
+        <label class="codigo-cajas" aria-label="Código de 6 dígitos">
+          <input name="codigo" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" required>
+          ${"<span></span>".repeat(6)}
+        </label>
+        <button class="btn full" type="submit">Entrar</button>
       </form>
-      <p class="sub" style="font-size:13px;text-align:center;margin:14px 0">¿No llega? Mira en spam o espera un minuto.</p>
-      ${formPegarEnlace()}
-      <button class="btn sec full" data-a="login">Usar otro correo</button>`);
+      <p class="sub" style="font-size:13px;text-align:center;margin:16px 0 10px">¿No llega? Mira en spam. El código caduca en una hora.</p>
+      <div class="acciones-pie" style="margin-top:0">
+        <button class="btn sec" data-a="reenviar" data-v="${esc(email)}" id="btn-reenviar" disabled>Reenviar</button>
+        <button class="btn linea" data-a="login">Otro correo</button>
+      </div>`);
+    pintarCajas();
+    setTimeout(() => $("#f-codigo [name=codigo]")?.focus(), 250);
+    let n = 60;
+    clearInterval(reenvioTimer);
+    const tick = () => {
+      const b = $("#btn-reenviar");
+      if (!b) return clearInterval(reenvioTimer);
+      b.disabled = n > 0; b.textContent = n > 0 ? `Reenviar (${n}s)` : "Reenviar código";
+      if (n-- <= 0) clearInterval(reenvioTimer);
+    };
+    tick(); reenvioTimer = setInterval(tick, 1000);
   }
-  function formPegarEnlace() {
-    return `<form id="f-enlace" class="pegar-enlace ${APP.standalone ? "destacado" : ""}" autocomplete="off">
-      <div class="h3">${APP.standalone ? "📲 Estás en la app" : "¿Usas BMSN como app?"}</div>
-      <p class="sub">${APP.ios ? "En iPhone el enlace se abre en Safari. Para entrar en la app: en el correo <b>mantén pulsado el botón del enlace → Copiar enlace</b> y pégalo aquí." : "Si el enlace se abre en otro sitio, cópialo desde el correo y pégalo aquí."}</p>
-      <div class="form-linea"><input name="enlace" inputmode="url" placeholder="Pega el enlace del correo" required><button class="btn chico" type="submit">Entrar</button></div>
-    </form>`;
+  function pintarCajas() {
+    const i = $("#f-codigo [name=codigo]");
+    if (!i) return;
+    const v = i.value;
+    $$("#f-codigo .codigo-cajas span").forEach((s, k) => {
+      s.textContent = v[k] || "";
+      s.classList.toggle("activa", document.activeElement === i && k === Math.min(v.length, 5));
+    });
   }
 
   // ---------- App instalable ----------
@@ -1046,6 +1043,10 @@
     "quien-soy": () => hojaQuienSoy(),
     instalar: () => instalar(),
     "modo-login": (d) => hojaLogin("", d.v),
+    reenviar: async (d) => {
+      try { await api.entrar(d.v); toast("Código nuevo enviado"); hojaCodigo(d.v); }
+      catch (e) { toast(msgError(e), true); }
+    },
     "ver-pass": (d, el) => { const i = el.previousElementSibling; i.type = i.type === "password" ? "text" : "password"; },
     "no-banner": () => { guardar("bmsn-sin-banner", "1"); render(); },
     "vista-planes": (d) => { S.vistaPlanes = d.v; render(); },
@@ -1122,11 +1123,20 @@
   });
 
   document.addEventListener("input", (ev) => {
+    if (ev.target.matches("#f-codigo [name=codigo]")) {
+      ev.target.value = ev.target.value.replace(/\D/g, "").slice(0, 6);
+      pintarCajas();
+      if (ev.target.value.length === 6) ev.target.form.requestSubmit();
+      return;
+    }
     if (!ev.target.matches("#f-quien [name=nombre]")) return;
     const n = ev.target.value.trim().toLowerCase();
     const p = n && S.personas.find((x) => x.nombre.toLowerCase() === n);
     $("#quien-pista").innerHTML = !n ? "&nbsp;" : p ? (p.user_id ? "⚠️ Ese perfil ya pertenece a otra cuenta." : `✓ Te unirás al perfil de <b>${esc(p.nombre)}</b> con sus estadísticas.`) : "Se creará un perfil nuevo con ese nombre.";
   });
+
+  document.addEventListener("focusin", pintarCajas);
+  document.addEventListener("focusout", () => setTimeout(pintarCajas, 0));
 
   document.addEventListener("change", async (ev) => {
     if (ev.target.id === "cal-persona") { S.calPersona = ev.target.value || null; render(); return; }
@@ -1152,8 +1162,8 @@
     if (f.id === "f-login") {
       const email = f.email.value.trim().toLowerCase();
       btn.disabled = true; btn.textContent = "Enviando…";
-      try { await api.entrar(email); guardar("bmsn-correo", email); if (!S.user) hojaLoginEnviado(email); }
-      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Enviarme el enlace"; }
+      try { await api.entrar(email); guardar("bmsn-correo", email); if (!S.user) hojaCodigo(email); }
+      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Enviarme el código"; }
     }
     if (f.id === "f-plan") {
       guardarCampos();
@@ -1178,10 +1188,14 @@
     }
     if (f.id === "f-codigo") {
       const codigo = f.codigo.value.replace(/\D/g, "");
-      if (codigo.length < 6) return toast("El código tiene 6 números", true);
+      if (codigo.length !== 6) return toast("El código tiene 6 dígitos", true);
+      if (btn.disabled) return;
       btn.disabled = true; btn.textContent = "Comprobando…";
       try { await api.entrarConCodigo(f.dataset.email, codigo); }
-      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar con el código"; }
+      catch (e) {
+        toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar";
+        f.codigo.value = ""; pintarCajas(); f.codigo.focus();
+      }
       return;
     }
     if (f.id === "f-clave") {
@@ -1197,12 +1211,6 @@
       btn.disabled = true;
       if (await hacer(() => api.ponerClaveGrupo(clave), "Contraseña del grupo guardada")) f.reset();
       btn.disabled = false;
-      return;
-    }
-    if (f.id === "f-enlace") {
-      btn.disabled = true; btn.textContent = "…";
-      try { await api.entrarConEnlace(f.enlace.value); cerrarHoja(); }
-      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar"; }
       return;
     }
     if (f.id === "f-admin") {
@@ -1265,7 +1273,7 @@
     S.admin = false;
     if (user) {
       try { S.admin = !!(await api.reclamarAdmin()); } catch { S.admin = false; }
-      if (hoja.open && $("#f-login, #login-enviado, #f-clave, #f-enlace, #f-codigo")) cerrarHoja();
+      if (hoja.open && $("#f-login, #f-clave, #f-codigo")) cerrarHoja();
       if (/access_token|error_description/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }
