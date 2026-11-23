@@ -653,3 +653,10 @@ body.es-admin .btn-admin-top { display: grid; }
   .top { margin-left: calc(var(--side) + var(--safe-l)); }
   .inicio-grid .col-a, .cal-detalle { top: calc(92px + var(--safe-t)); }
 }
+
+/* ---------- Entrar con contraseña del grupo ---------- */
+.seg-full { display: flex; width: 100%; }
+.seg-full button { flex: 1; padding: 9px 8px; }
+.pass { position: relative; }
+.pass input { padding-right: 48px; }
+.ver-pass { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; font-size: 18px; cursor: pointer; padding: 6px; opacity: .7; }

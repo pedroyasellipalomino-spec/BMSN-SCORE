@@ -19,6 +19,7 @@
   const dec = (x) => (isFinite(x) ? (Math.round(x * 10) / 10).toString().replace(".", ",") : "—");
   const iniciales = (n) => n.trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
   const tono = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  const normalizarClave = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
   const hue = (p) => (Number.isInteger(p.color) ? p.color : tono(p.nombre));
   const avatar = (p, cls = "") => {
     if (!p) return "";
@@ -49,6 +50,9 @@
     if (/bucket not found/i.test(m)) return "Las fotos aún no están activadas (falta 03_fotos_admin.sql).";
     if (/row-level security|unauthorized/i.test(m)) return "No tienes permiso para hacer esto.";
     if (/duplicate key.*admins/i.test(m)) return "Ese correo ya es admin.";
+    if (/invalid login credentials/i.test(m)) return "No se pudo entrar. Revisa el correo y la contraseña.";
+    if (/email address not authorized|email_address_not_authorized/i.test(m)) return "Supabase no deja enviar correos a esa dirección. Entra con la contraseña del grupo.";
+    if (/over_email_send_rate_limit|email rate limit/i.test(m)) return "Se alcanzó el límite de correos por hora. Entra con la contraseña del grupo.";
     return m;
   };
 
@@ -82,7 +86,7 @@
           return sb.from("personas").select("id,nombre").order("nombre");
         });
         const opcional = (p) => p.then((r) => r.data || []);
-        const [personas, planes, asist, encuestas, resultados, participacion, admins] = await Promise.all([
+        const [personas, planes, asist, encuestas, resultados, participacion, admins, claveGrupo] = await Promise.all([
           q(personasQ),
           q(sb.from("planes").select("id,fecha,titulo,anfitrion,notas").order("fecha", { ascending: false }).order("creado", { ascending: false })),
           q(sb.from("asistencias").select("plan_id,persona_id")),
@@ -90,10 +94,11 @@
           q(sb.rpc("resultados")),
           opcional(sb.rpc("participacion")),
           opcional(sb.rpc("personas_admin")),
+          sb.rpc("clave_grupo_activa").then((r) => (r.error ? null : !!r.data)),
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email) };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -134,6 +139,13 @@
         const { error } = await sb.auth.verifyOtp({ token_hash: token, type: tipo === "signup" ? "signup" : tipo === "magiclink" ? "magiclink" : "email" });
         if (error) throw new Error(/expired|invalid/i.test(error.message) ? "El enlace venció o ya se usó. Pide uno nuevo." : error.message);
       },
+      async entrarConClave(email, clave) {
+        const pass = normalizarClave(clave);
+        await q(sb.rpc("entrar_grupo", { p_email: email, p_clave: pass }));
+        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if (error) throw error;
+      },
+      ponerClaveGrupo: (clave) => q(sb.rpc("poner_clave_grupo", { p_clave: normalizarClave(clave) })),
       salir: () => sb.auth.signOut(),
       alCambiarSesion: (fn) => sb.auth.onAuthStateChange((ev, s) => setTimeout(() => fn(s?.user ?? null), 0)),
     };
@@ -173,7 +185,7 @@
           votos: user ? Object.entries(mio).map(([e, o]) => ({ encuesta_id: e, user_id: user.id, email: user.email, opcion: o.opcion, fecha: o.fecha })) : [],
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => true,
@@ -214,6 +226,11 @@
       async entrar(email) { await pausa(); user = { id: "demo", email }; setTimeout(() => listener(user), 300); },
       async salir() { user = null; listener(null); },
       async entrarConEnlace() { throw new Error("En el modo demo no hace falta: usa Entrar."); },
+      async entrarConClave(email, clave) {
+        if (normalizarClave(clave) !== "demo bmsn") throw new Error("Contraseña del grupo incorrecta");
+        user = { id: "demo", email }; setTimeout(() => listener(user), 200);
+      },
+      async ponerClaveGrupo() {},
       alCambiarSesion(fn) { listener = fn; fn(null); },
     };
   }
@@ -235,6 +252,7 @@
       S.migracion = d.migracion !== false;
       S.fotos = d.fotos !== false;
       S.emailsAdmin = d.emailsAdmin || [];
+      S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
       S.yo = S.user ? S.personas.find((p) => p.user_id && p.user_id === S.user.id) || null : null;
       S.votosAdmin = S.admin ? d.votos : [];
       S.errorCarga = null;
@@ -519,6 +537,16 @@
             <div class="det">${p.user_id ? `Con cuenta desde ${p.vinculado ? fechaCorta(p.vinculado.slice(0, 10)) : "—"}` : "Sin cuenta todavía"}</div></span>
             <span class="estado-cuenta ${p.user_id ? "si" : ""}">${p.user_id ? "✓" : "—"}</span></button>`).join("") || `<div class="vacio"><p>Aún no hay personas.</p></div>`}</div>
         </div>
+        <div>
+        <div class="seccion"><div class="cab"><span class="eyebrow">Contraseña del grupo</span>
+          <span class="estado ${S.claveGrupo ? "" : "cerrada"}">${S.claveGrupo ? "Activa" : S.claveGrupo === false ? "Sin poner" : "Falta SQL"}</span></div>
+          ${S.claveGrupo === null ? `<p class="sub">Ejecuta <b>supabase/04_clave_grupo.sql</b> en Supabase para activarla.</p>` : `
+          <p class="sub" style="margin:-4px 0 12px">Quien la sepa entra con su correo sin verificarlo. Tu correo de admin siempre entra con enlace.</p>
+          <form id="f-clave-grupo" class="form-linea" autocomplete="off">
+            <input type="text" name="clave" placeholder="${S.claveGrupo ? "Nueva contraseña" : "Contraseña del grupo"}" required>
+            <button class="btn chico" type="submit">${S.claveGrupo ? "Cambiar" : "Guardar"}</button>
+          </form>`}
+        </div>
         <div class="seccion"><div class="cab"><span class="eyebrow">Admins</span></div>
           <div class="lista">${S.emailsAdmin.map((e) => `<div class="fila"><span class="cuerpo"><div class="nom" style="text-transform:none">${esc(e)}</div>
             <div class="det">${e === yoEmail ? "Tú" : "Admin"}</div></span>
@@ -528,6 +556,7 @@
             <button class="btn chico" type="submit">Hacer admin</button>
           </form>
           <p class="sub" style="font-size:12.5px;margin-top:8px">Esa persona podrá anotar planes, gente y encuestas.</p>
+        </div>
         </div>
       </div>`;
   }
@@ -619,15 +648,32 @@
   hoja.addEventListener("click", (e) => { if (e.target === hoja) cerrarHoja(); });
   const cabHoja = (t, sub = "") => `<div class="hoja-cab"><div>${sub ? `<div class="eyebrow">${sub}</div>` : ""}<div class="h2">${t}</div></div><button class="cerrar" data-a="cerrar" aria-label="Cerrar">${ICON.cerrar}</button></div>`;
 
-  function hojaLogin(motivo = "") {
+  let modoLogin = null;
+  function hojaLogin(motivo = "", modo) {
+    const conClave = S.claveGrupo === true;
+    modoLogin = modo || modoLogin || (conClave ? "clave" : "enlace");
+    if (!conClave) modoLogin = "enlace";
+    const correo = esc(leer("bmsn-correo") || "");
     abrirHoja(`${cabHoja("Entrar")}
-      <p class="sub" style="margin:-6px 0 20px">${motivo || "Te enviamos un enlace a tu correo. Sin contraseñas."}</p>
+      ${motivo ? `<p class="sub" style="margin:-6px 0 16px">${motivo}</p>` : ""}
+      ${conClave ? `<div class="seg seg-full" style="margin-bottom:18px">
+        <button class="${modoLogin === "clave" ? "on" : ""}" data-a="modo-login" data-v="clave">Contraseña del grupo</button>
+        <button class="${modoLogin === "enlace" ? "on" : ""}" data-a="modo-login" data-v="enlace">Enlace por correo</button></div>` : ""}
+      ${modoLogin === "clave" ? `
+      <form id="f-clave" autocomplete="on">
+        <p class="sub" style="margin:0 0 16px">Escribe tu correo y la contraseña del grupo. Entras al momento, sin verificar nada.</p>
+        <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="username" placeholder="nombre@gmail.com" value="${correo}"></label>
+        <label class="campo"><span>Contraseña del grupo</span><div class="pass"><input type="password" name="clave" required autocomplete="current-password" placeholder="La que te pasaron en el grupo"><button type="button" class="ver-pass" data-a="ver-pass" aria-label="Mostrar contraseña">👁</button></div></label>
+        <p class="ayuda" style="margin:-8px 0 16px">Da igual mayúsculas, tildes o espacios.</p>
+        <button class="btn full" type="submit">Entrar</button>
+      </form>` : `
+      <p class="sub" style="margin:0 0 16px">Te enviamos un enlace a tu correo. Sin contraseñas.</p>
       <form id="f-login">
-        <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="email" placeholder="nombre@gmail.com"></label>
+        <label class="campo"><span>Tu correo</span><input type="email" name="email" required autocomplete="email" placeholder="nombre@gmail.com" value="${correo}"></label>
         <button class="btn full" type="submit">Enviarme el enlace</button>
       </form>
-      ${APP.standalone ? `<div style="height:16px"></div>${formPegarEnlace()}` : ""}`);
-    setTimeout(() => $("#f-login [name=email]")?.focus(), 250);
+      ${APP.standalone ? `<div style="height:16px"></div>${formPegarEnlace()}` : ""}`}`);
+    setTimeout(() => { const i = $(correo ? "#hoja [name=clave], #f-login [name=email]" : "#hoja [name=email]"); i?.focus(); }, 250);
   }
   function hojaLoginEnviado(email) {
     abrirHoja(`${cabHoja("Revisa tu correo")}
@@ -990,6 +1036,8 @@
     "volver-plan": () => { if (!borrador) nuevoBorrador(); if (S.personas.length) hojaPlan(); else cerrarHoja(); },
     "quien-soy": () => hojaQuienSoy(),
     instalar: () => instalar(),
+    "modo-login": (d) => hojaLogin("", d.v),
+    "ver-pass": (d, el) => { const i = el.previousElementSibling; i.type = i.type === "password" ? "text" : "password"; },
     "no-banner": () => { guardar("bmsn-sin-banner", "1"); render(); },
     "vista-planes": (d) => { S.vistaPlanes = d.v; render(); },
     "cal-mover": (d) => {
@@ -1095,7 +1143,7 @@
     if (f.id === "f-login") {
       const email = f.email.value.trim().toLowerCase();
       btn.disabled = true; btn.textContent = "Enviando…";
-      try { await api.entrar(email); if (!S.user) hojaLoginEnviado(email); }
+      try { await api.entrar(email); guardar("bmsn-correo", email); if (!S.user) hojaLoginEnviado(email); }
       catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Enviarme el enlace"; }
     }
     if (f.id === "f-plan") {
@@ -1118,6 +1166,21 @@
         $("#recien").insertAdjacentHTML("beforeend", `<span class="chip on">✓ ${esc(nombre)}</span>`);
       }
       btn.disabled = false; f.nombre.focus();
+    }
+    if (f.id === "f-clave") {
+      const email = f.email.value.trim().toLowerCase();
+      btn.disabled = true; btn.textContent = "Entrando…";
+      try { await api.entrarConClave(email, f.clave.value); guardar("bmsn-correo", email); }
+      catch (e) { toast(msgError(e), true); btn.disabled = false; btn.textContent = "Entrar"; }
+      return;
+    }
+    if (f.id === "f-clave-grupo") {
+      const clave = f.clave.value;
+      if (normalizarClave(clave).length < 6) return toast("Mínimo 6 caracteres", true);
+      btn.disabled = true;
+      if (await hacer(() => api.ponerClaveGrupo(clave), "Contraseña del grupo guardada")) f.reset();
+      btn.disabled = false;
+      return;
     }
     if (f.id === "f-enlace") {
       btn.disabled = true; btn.textContent = "…";
@@ -1185,7 +1248,7 @@
     S.admin = false;
     if (user) {
       try { S.admin = !!(await api.reclamarAdmin()); } catch { S.admin = false; }
-      if (hoja.open && $("#f-login, #login-enviado")) cerrarHoja();
+      if (hoja.open && $("#f-login, #login-enviado, #f-clave, #f-enlace")) cerrarHoja();
       if (/access_token|error_description/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
       if (habia || DEMO) toast(S.admin ? "Entraste como admin" : "Sesión iniciada");
     }
