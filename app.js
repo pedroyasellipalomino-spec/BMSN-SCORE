@@ -1269,6 +1269,27 @@
   }
 
   // "¿Quién eres?": une el correo a una persona de BMSN
+  const claveNombre = (t) => normalizarClave(t).replace(/(.)\1+/g, "$1").replace(/[^a-z0-9 ]/g, "");
+  function distancia(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  }
+  function perfilParecido(texto) {
+    const k = claveNombre(texto);
+    if (k.length < 3) return null;
+    const libres = S.personas.filter((p) => !p.user_id);
+    const pts = libres.map((p) => {
+      const kp = claveNombre(p.nombre);
+      const nombreSolo = kp.split(" ")[0];
+      const dist = Math.min(distancia(k, kp), k.includes(" ") ? 99 : distancia(k, nombreSolo) + 1);
+      return { p, dist };
+    }).filter((x) => x.dist <= Math.max(1, Math.floor(k.length / 6))).sort((a, b) => a.dist - b.dist);
+    return pts.length && (pts.length === 1 || pts[0].dist < pts[1].dist) ? pts[0].p : null;
+  }
+
   function hojaQuienSoy() {
     const libres = S.personas.filter((p) => !p.user_id);
     abrirHoja(`${cabHoja("¿Quién eres?", "Bienvenido a BMSN")}
@@ -1820,7 +1841,10 @@
     if (!ev.target.matches("#f-quien [name=nombre]")) return;
     const n = ev.target.value.trim().toLowerCase();
     const p = n && S.personas.find((x) => x.nombre.toLowerCase() === n);
-    $("#quien-pista").innerHTML = !n ? "&nbsp;" : p ? (p.user_id ? "⚠️ Ese perfil ya pertenece a otra cuenta." : `✓ Te unirás al perfil de <b>${esc(p.nombre)}</b> con sus estadísticas.`) : "Se creará un perfil nuevo con ese nombre.";
+    const parecido = !p && n ? perfilParecido(n) : null;
+    $("#quien-pista").innerHTML = !n ? "&nbsp;" : p ? (p.user_id ? "⚠️ Ese perfil ya pertenece a otra cuenta." : `✓ Te unirás al perfil de <b>${esc(p.nombre)}</b> con sus estadísticas.`)
+      : parecido ? `🤔 ¿Eres <b>${esc(parecido.nombre)}</b>? <button type="button" class="link" data-a="soy" data-id="${parecido.id}">Sí, soy yo</button>`
+      : "Se creará un perfil nuevo con ese nombre.";
   });
 
   document.addEventListener("focusin", pintarCajas);
@@ -1922,6 +1946,8 @@
       if (!nombre) return;
       const existe = S.personas.find((p) => p.nombre.toLowerCase() === nombre.toLowerCase());
       if (existe && existe.user_id) return toast("Ese nombre ya pertenece a otra cuenta", true);
+      const parecido = !existe && perfilParecido(nombre);
+      if (parecido) return acciones.soy({ id: parecido.id }); // pregunta "¿Eres X?" antes de crear un perfil nuevo
       btn.disabled = true;
       if (await hacer(() => api.vincular(null, nombre), existe ? `¡Hola, ${existe.nombre}! Tu perfil ya tiene tus datos` : `¡Bienvenido, ${nombre}!`)) {
         if (S.yo) hojaPerfil(S.yo.id); else cerrarHoja();
