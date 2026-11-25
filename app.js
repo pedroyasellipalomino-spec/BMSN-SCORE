@@ -121,9 +121,13 @@
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const jugadoresMes = await opcional(sb.from("jugadores_mes").select("mes,persona_id"));
+        const [valResumen, valoraciones] = await Promise.all([
+          opcional(sb.rpc("valoraciones_resumen")),
+          S.user ? opcional(sb.from("valoraciones").select("plan_id,persona_id,estrellas,comentario,editado")) : [],
+        ]);
         const solicitudes = S.user ? await opcional(sb.from("solicitudes").select("*").order("creado", { ascending: false }).limit(200)) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes, valResumen, valoraciones };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -159,6 +163,7 @@
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
       automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
+      valorar: (plan, estrellas, comentario) => q(sb.rpc("valorar_plan", { p_plan: plan, p_estrellas: estrellas, p_comentario: comentario || "" })),
       ponerJugadorMes: (mes, persona) => q(sb.from("jugadores_mes").upsert({ mes, persona_id: persona })),
       quitarJugadorMes: (mes) => q(sb.from("jugadores_mes").delete().eq("mes", mes)),
       votarVarios: (id, opciones) => q(sb.rpc("votar_varios", { p_encuesta: id, p_opciones: opciones })),
@@ -202,6 +207,11 @@
     const emailsAdmin = [];
     const solicitudes = [];
     const jugMes = [];
+    // Valoraciones de ejemplo en los planes recientes
+    const vals = [];
+    [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 8).forEach((pl, i) => asist.filter((a) => a.plan_id === pl.id).forEach((a, j) => {
+      if ((i + j) % 3 !== 2) vals.push({ plan_id: pl.id, persona_id: a.persona_id, estrellas: [5, 4, 4, 3, 5, 2, 4, 5][(i * 3 + j) % 8], comentario: j === 0 ? ["Épico", "Muy bien", "Faltó comida", ""][i % 4] : "", editado: new Date().toISOString() });
+    }));
     const copias = [{ id: 1, creada: sumarDias(hoy(), -3) + "T08:15:00Z", planes: 26, personas: 8, votos: 21 }];
     const pausa = () => new Promise((r) => setTimeout(r, 120));
     return {
@@ -216,7 +226,10 @@
           votantes: Object.entries(votos).map(([e, o]) => ({ encuesta_id: e, n: Math.max(0, ...Object.values(o)) + (mio[e] ? 1 : 0) })), nominados: true,
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
-          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], jugadoresMes: [...jugMes], emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
+          migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], jugadoresMes: [...jugMes],
+          valResumen: Object.values(vals.filter((v) => asist.some((a) => a.plan_id === v.plan_id && a.persona_id === v.persona_id)).reduce((o, v) => {
+            const r = (o[v.plan_id] ??= { plan_id: v.plan_id, suma: 0, n: 0 }); r.suma += v.estrellas; r.n++; return o; }, {})).map((r) => ({ plan_id: r.plan_id, media: r.suma / r.n, n: r.n })),
+          valoraciones: !user ? [] : /^miembro/i.test(user.email) ? vals.filter((v) => v.persona_id === personas.find((x) => x.user_id === user.id)?.id).map((v) => ({ ...v })) : vals.map((v) => ({ ...v })), emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
         };
       },
       reclamarAdmin: async () => !/^miembro/i.test(user?.email || ""), // demo: "miembro…@" entra como miembro
@@ -256,6 +269,12 @@
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
+      async valorar(plan, estrellas, comentario) {
+        const yo = personas.find((x) => x.user_id === user?.id)?.id;
+        const i = vals.findIndex((v) => v.plan_id === plan && v.persona_id === yo);
+        if (i >= 0) vals.splice(i, 1);
+        if (estrellas) vals.push({ plan_id: plan, persona_id: yo, estrellas, comentario: (comentario || "").trim().slice(0, 200), editado: new Date().toISOString() });
+      },
       async ponerJugadorMes(mes, persona) { const i = jugMes.findIndex((j) => j.mes === mes); if (i >= 0) jugMes.splice(i, 1); jugMes.push({ mes, persona_id: persona }); },
       async quitarJugadorMes(mes) { const i = jugMes.findIndex((j) => j.mes === mes); if (i >= 0) jugMes.splice(i, 1); },
       async automatizar() { return "nada"; },
@@ -294,12 +313,12 @@
         d = await api.cargar();
         S.sinConexion = null;
         if (!DEMO) guardar("bmsn-cache", JSON.stringify({ t: Date.now(), personas: d.personas, planes: d.planes, asist: d.asist, encuestas: d.encuestas,
-          resultados: d.resultados, votantes: d.votantes, participacion: d.participacion, admins: d.admins, jugadoresMes: d.jugadoresMes }));
+          resultados: d.resultados, votantes: d.votantes, participacion: d.participacion, admins: d.admins, jugadoresMes: d.jugadoresMes, valResumen: d.valResumen }));
       } catch (e) {
         // Sin conexión: se muestra lo último guardado en este aparato (solo datos públicos del grupo)
         const cache = JSON.parse(leer("bmsn-cache") || "null");
         if (!cache || navigator.onLine !== false && !/fetch|network|load failed/i.test(e?.message || "")) throw e;
-        d = { ...cache, votos: [], solicitudes: [], emailsAdmin: [], migracion: true, fotos: true, nominados: true, conDesde: true, conTema: true, claveGrupo: null };
+        d = { ...cache, votos: [], solicitudes: [], valoraciones: [], emailsAdmin: [], migracion: true, fotos: true, nominados: true, conDesde: true, conTema: true, claveGrupo: null };
         S.sinConexion = cache.t;
       }
       S.ultimaCarga = Date.now();
@@ -321,6 +340,8 @@
       S.emailsAdmin = d.emailsAdmin || [];
       S.solicitudes = d.solicitudes || [];
       S.jugadoresMes = d.jugadoresMes || [];
+      S.valMedia = Object.fromEntries((d.valResumen || []).map((x) => [x.plan_id, { media: Number(x.media), n: Number(x.n) }]));
+      S.valoraciones = d.valoraciones || [];
       S.conDesde = d.conDesde !== false;
       S.conTema = !!d.conTema;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
@@ -467,7 +488,9 @@
     const anioW = dispW?.anio;
     const nW = dispW ? S.planes.filter((x) => x.fecha.startsWith(anioW)).length : 0;
     const tarjetaW = nW >= 5 ? `<button class="wrapped-tarjeta" data-a="wrapped" data-v="${anioW}"><span class="wt-ic">🎁</span><span><span class="eyebrow">${dispW?.publico ? "Ya disponible" : "Vista previa · solo admin · sale el 29 dic"}</span><b>BMSN Wrapped ${anioW}</b><span class="sub">Tu año en planes, en 1 minuto</span></span><span class="wt-flecha">→</span></button>` : "";
-    return cartel + tarjetaW + `<div class="inicio-grid"><div class="col-a">
+    const pv = planPorValorar();
+    const tarjetaV = pv ? `<button class="wrapped-tarjeta val-aviso" data-a="ver-plan" data-id="${pv.id}"><span class="wt-ic">⭐</span><span><span class="eyebrow">Pendiente de valorar · ${diaSemana(pv.fecha)} ${fechaCorta(pv.fecha)}</span><b>${esc(pv.titulo)}</b><span class="sub">¿Qué tal estuvo? Ponle estrellas</span></span><span class="wt-flecha">→</span></button>` : "";
+    return cartel + tarjetaW + tarjetaV + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
         <div><div class="display">${planes.length}</div><div class="sub">plan${planes.length === 1 ? "" : "es"} ${etiqueta}</div></div>
@@ -563,7 +586,11 @@
       cComp = `<div class="est-card"><div class="cab"><span class="eyebrow">Frente a ${esc(ant.etiqueta)}</span></div>
         ${fila("Planes", a.planes, b.planes)}${fila("Personas por plan", a.prom, b.prom, dec)}${fila("En casa de alguien", a.casas, b.casas)}${fila("Gente distinta", a.gente, b.gente)}</div>`;
     }
-    return `<div class="seccion"><div class="cab"><span class="eyebrow">Más estadísticas</span></div><div class="est-grid">${cComp}${cDias}${cCasas}${cDuplas}</div></div>`;
+    // Mejor valorados (con al menos 2 votos)
+    const val = planes.filter((x) => valDe(x)?.n >= 2).sort((a, b) => valDe(b).media - valDe(a).media || valDe(b).n - valDe(a).n).slice(0, 5);
+    const cVal = val.length ? `<div class="est-card"><div class="cab"><span class="eyebrow">Mejor valorados</span><span class="sub">mín. 2 votos</span></div>
+      <div class="est-val">${val.map((x, i) => `<button class="est-val-fila" data-a="ver-plan" data-id="${x.id}"><span class="pos">${i + 1}</span><span class="nom">${esc(x.titulo)}<span class="sub">${fechaCorta(x.fecha)}</span></span>${estrellas(valDe(x).media)}<b>${dec(valDe(x).media)}</b></button>`).join("")}</div></div>` : "";
+    return `<div class="seccion"><div class="cab"><span class="eyebrow">Más estadísticas</span></div><div class="est-grid">${cComp}${cVal}${cDias}${cCasas}${cDuplas}</div></div>`;
   }
 
   // Gráfico mes a mes, mejor compañía y día favorito en el perfil
@@ -686,6 +713,39 @@
       </div></div>`;
   }
 
+  // ---------- Valoraciones ----------
+  const valDe = (p) => S.valMedia?.[p.id] || null;
+  const miValoracion = (p) => (S.yo ? (S.valoraciones || []).find((v) => v.plan_id === p.id && v.persona_id === S.yo.id) || null : null);
+  const puedeValorar = (p) => !!S.yo && p.asistentes.includes(S.yo.id) && p.fecha <= hoy();
+  const estrellas = (media, cls = "") => `<span class="estrellas ${cls}" role="img" aria-label="${dec(media)} de 5 estrellas"><span class="e-base">★★★★★</span><span class="e-lleno" style="width:${Math.max(0, Math.min(5, media)) * 20}%">★★★★★</span></span>`;
+  // El plan más reciente al que fui (últimas 2 semanas) y que aún no he valorado
+  function planPorValorar() {
+    if (!S.yo) return null;
+    const desde = sumarDias(hoy(), -14);
+    return S.planes.find((p) => p.fecha >= desde && puedeValorar(p) && !miValoracion(p)) || null;
+  }
+
+  function seccionValoracion(p) {
+    if (p.fecha > hoy()) return "";
+    const r = valDe(p), mia = miValoracion(p), puede = puedeValorar(p);
+    const detalle = S.admin ? (S.valoraciones || []).filter((v) => v.plan_id === p.id && p.asistentes.includes(v.persona_id))
+      .sort((a, b) => b.estrellas - a.estrellas) : [];
+    if (!r && !puede && !detalle.length) return "";
+    const resumen = r
+      ? `<div class="val-resumen"><b class="val-media">${dec(r.media)}</b><span class="val-col">${estrellas(r.media, "grande")}<span class="sub">${r.n} de ${p.asistentes.length} valoraron</span></span></div>`
+      : `<p class="sub" style="margin:0 0 12px">Aún nadie lo ha valorado.</p>`;
+    const form = puede ? `<form id="f-valorar" class="val-form" data-id="${p.id}">
+        <span class="eyebrow">${mia ? "Tu valoración" : "¿Qué tal estuvo?"}</span>
+        <div class="val-picker" role="radiogroup" aria-label="Estrellas">${[1, 2, 3, 4, 5].map((n) => `<label title="${n} estrella${n === 1 ? "" : "s"}"><input type="radio" name="estrellas" value="${n}" ${mia?.estrellas === n ? "checked" : ""}><span>★</span></label>`).join("")}</div>
+        <input name="comentario" maxlength="200" value="${esc(mia?.comentario || "")}" placeholder="Comentario (opcional)">
+        <div class="val-botones"><button class="btn chico" type="submit">${mia ? "Actualizar" : "Valorar"}</button>${mia ? `<button type="button" class="btn sec chico" data-a="quitar-valoracion" data-id="${p.id}">Quitar</button>` : ""}</div>
+        <p class="ayuda" style="margin:8px 0 0">Todos ven la media. Tus estrellas y tu comentario solo los ve el admin.</p>
+      </form>` : "";
+    const lista = detalle.length ? `<div class="lista val-detalle">${detalle.map((v) => { const q = persona(v.persona_id); return `<div class="fila">${avatar(q, "sm")}<span class="cuerpo"><div class="nom">${esc(q?.nombre || "?")}</div>${v.comentario ? `<div class="det">“${esc(v.comentario)}”</div>` : ""}</span>${estrellas(v.estrellas)}</div>`; }).join("")}</div>
+      <p class="ayuda" style="margin:8px 0 0">🔒 El detalle solo lo ves tú como admin.</p>` : "";
+    return `<div class="seccion val-seccion"><div class="cab"><span class="eyebrow">⭐ Valoración</span></div>${resumen}${form}${lista}</div>`;
+  }
+
   function tarjetaPlan(p, pid = null) {
     const anf = persona(p.anfitrion);
     const gente = p.asistentes.map(persona).filter(Boolean);
@@ -694,7 +754,7 @@
       <span class="fecha-bloque"><b>${+p.fecha.slice(8)}</b><span>${diaSemana(p.fecha)}</span></span>
       <span class="cuerpo">
         <div class="tit">${esc(p.titulo)}${p.importado ? ' <span class="tag-importado" title="Asistentes aproximados">≈</span>' : ""}</div>
-        <div class="casa">${anf ? `en casa de <em>${esc(anf.nombre)}</em>` : "fuera de casa"} · ${gente.length} personas</div>
+        <div class="casa">${anf ? `en casa de <em>${esc(anf.nombre)}</em>` : "fuera de casa"} · ${gente.length} personas${valDe(p) ? ` · <span class="val-mini">★ ${dec(valDe(p).media)}</span>` : ""}</div>
         <div class="pila">${gente.slice(0, 6).map((g) => avatar(g, "sm")).join("")}${gente.length > 6 ? `<span class="av sm mas">+${gente.length - 6}</span>` : ""}</div>
         ${estado}
       </span>
@@ -1544,6 +1604,7 @@
       ${p.importado ? `<div class="banner aviso-importado"><span>≈ Plan importado: los totales de cada persona son exactos, pero quién fue a este plan en concreto es <b>aproximado</b>.</span></div>` : ""}
       ${p.notas ? `<p style="margin:0 0 18px">${esc(p.notas)}</p>` : ""}
       <div class="lista">${gente.map((g) => `<button class="fila" data-a="perfil" data-id="${g.id}">${avatar(g)}<span class="cuerpo"><div class="nom">${esc(g.nombre)}</div></span>${g.id === p.anfitrion ? "<span>🏠</span>" : ""}</button>`).join("")}</div>
+      ${seccionValoracion(p)}
       ${botonYoFui(p)}
       ${S.admin ? `<div class="acciones-pie"><button class="btn sec" data-a="editar-plan" data-id="${p.id}">Editar</button><button class="btn peligro" data-a="borrar-plan" data-id="${p.id}">Borrar</button></div>` : ""}`);
   }
@@ -1725,6 +1786,7 @@
     "cerrar-wrapped": () => cerrarWrapped(),
     "w-sig": () => { if (wrapped.i < wrapped.pantallas.length - 1) { wrapped.i++; pintarWrapped(); } else cerrarWrapped(); },
     "w-ant": () => { if (wrapped.i > 0) { wrapped.i--; pintarWrapped(); } },
+    "quitar-valoracion": async (d) => { if (await hacer(() => api.valorar(d.id, null, ""), "Valoración quitada")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
     "yo-fui": async (d) => { if (await hacer(() => api.pedirAsistencia(d.id), "Enviado: el admin lo revisará")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
     "admin-me-apunto": async (d) => {
       const p = S.planes.find((x) => x.id === d.id);
@@ -1926,6 +1988,15 @@
       btn.disabled = true;
       if (await hacer(() => api.ponerClaveGrupo(clave), "Contraseña del grupo guardada")) f.reset();
       btn.disabled = false;
+      return;
+    }
+    if (f.id === "f-valorar") {
+      const n = +(f.querySelector("[name=estrellas]:checked")?.value || 0);
+      if (!n) return toast("Elige de 1 a 5 estrellas", true);
+      btn.disabled = true;
+      const id = f.dataset.id;
+      if (await hacer(() => api.valorar(id, n, f.comentario.value.trim()), "¡Gracias por valorar!")) hojaVerPlan(S.planes.find((p) => p.id === id));
+      else btn.disabled = false;
       return;
     }
     if (f.id === "f-jugador") {
