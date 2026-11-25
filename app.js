@@ -123,13 +123,15 @@
         const jugadoresMes = await opcional(sb.from("jugadores_mes").select("mes,persona_id"));
         const vivos = await opcional(sb.from("planes_vivo").select("*").or(`fin.is.null,fin.gt.${new Date(Date.now() - 864e5).toISOString()}`).order("inicio", { ascending: false }).limit(5));
         const presentesVivo = vivos.length ? await opcional(sb.from("presentes_vivo").select("vivo_id,persona_id,llegada").in("vivo_id", vivos.map((v) => v.id))) : [];
+        const convs = await opcional(sb.from("convocatorias").select("*").eq("cancelada", false).is("vivo_id", null).gt("cuando", new Date(Date.now() - 6 * 36e5).toISOString()).order("cuando").limit(10));
+        const respConv = convs.length ? await opcional(sb.from("respuestas_conv").select("conv_id,persona_id,respuesta,fecha").in("conv_id", convs.map((c) => c.id))) : [];
         const [valResumen, valoraciones] = await Promise.all([
           opcional(sb.rpc("valoraciones_resumen")),
           S.user ? opcional(sb.from("valoraciones").select("plan_id,persona_id,estrellas,comentario,editado")) : [],
         ]);
         const solicitudes = S.user ? await opcional(sb.from("solicitudes").select("*").order("creado", { ascending: false }).limit(200)) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes, valResumen, valoraciones, vivos, presentesVivo };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes, valResumen, valoraciones, vivos, presentesVivo, convs, respConv };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -165,6 +167,10 @@
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
       automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
+      convocar: (d) => q(sb.rpc("convocar_plan", { p_titulo: d.titulo, p_anfitrion: d.anfitrion || null, p_lugar: d.lugar || "", p_cuando: d.cuando, p_notas: d.notas || "" })),
+      responderConv: (id, r) => q(sb.rpc("responder_convocatoria", { p_conv: id, p_respuesta: r })),
+      cancelarConv: (id) => q(sb.rpc("cancelar_convocatoria", { p_conv: id })),
+      empezarConv: (id) => q(sb.rpc("empezar_convocatoria", { p_conv: id })),
       empezarVivo: (d) => q(sb.rpc("empezar_plan_vivo", { p_titulo: d.titulo, p_anfitrion: d.anfitrion || null, p_notas: d.notas || "" })),
       editarVivo: (id, d) => q(sb.rpc("editar_plan_vivo", { p_vivo: id, p_titulo: d.titulo, p_anfitrion: d.anfitrion || null, p_notas: d.notas || "" })),
       estoyAqui: (id, persona) => q(sb.rpc("estoy_aqui", { p_vivo: id, p_persona: persona || null })),
@@ -216,6 +222,8 @@
     const solicitudes = [];
     const jugMes = [];
     const vivos = [], presVivo = [];
+    const convs = [{ id: "c1", titulo: "Pichanga + parrilla", anfitrion: null, lugar: "Cancha de siempre", cuando: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 11) + "23:00:00Z", notas: "Llevad camiseta oscura", creado_por: personas[1].id, creado: new Date(Date.now() - 3 * 36e5).toISOString(), cancelada: false, vivo_id: null }];
+    const respConv = [{ conv_id: "c1", persona_id: personas[1].id, respuesta: "voy" }, { conv_id: "c1", persona_id: personas[4].id, respuesta: "voy" }, { conv_id: "c1", persona_id: personas[3].id, respuesta: "quizas" }, { conv_id: "c1", persona_id: personas[7].id, respuesta: "no" }];
     // Valoraciones de ejemplo en los planes recientes
     const vals = [];
     [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 8).forEach((pl, i) => asist.filter((a) => a.plan_id === pl.id).forEach((a, j) => {
@@ -236,6 +244,7 @@
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
           migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], jugadoresMes: [...jugMes],
+          convs: convs.filter((c) => !c.cancelada && !c.vivo_id && Date.parse(c.cuando) > Date.now() - 6 * 36e5).sort((a, b) => a.cuando.localeCompare(b.cuando)).map((c) => ({ ...c })), respConv: respConv.map((r) => ({ ...r })),
           vivos: vivos.map((v) => ({ ...v })), presentesVivo: presVivo.map((x) => ({ ...x })),
           valResumen: Object.values(vals.filter((v) => asist.some((a) => a.plan_id === v.plan_id && a.persona_id === v.persona_id)).reduce((o, v) => {
             const r = (o[v.plan_id] ??= { plan_id: v.plan_id, suma: 0, n: 0 }); r.suma += v.estrellas; r.n++; return o; }, {})).map((r) => ({ plan_id: r.plan_id, media: r.suma / r.n, n: r.n })),
@@ -279,6 +288,23 @@
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
+      async convocar(d) {
+        const yo = personas.find((x) => x.user_id === user?.id)?.id;
+        const id = uid();
+        convs.push({ id, titulo: d.titulo, anfitrion: d.anfitrion || null, lugar: d.anfitrion ? "" : d.lugar || "", cuando: d.cuando, notas: d.notas || "", creado_por: yo, creado: new Date().toISOString(), cancelada: false, vivo_id: null });
+        respConv.push({ conv_id: id, persona_id: yo, respuesta: "voy" });
+      },
+      async responderConv(id, r) {
+        const yo = personas.find((x) => x.user_id === user?.id)?.id;
+        const i = respConv.findIndex((x) => x.conv_id === id && x.persona_id === yo); if (i >= 0) respConv.splice(i, 1);
+        if (r) respConv.push({ conv_id: id, persona_id: yo, respuesta: r });
+      },
+      async cancelarConv(id) { convs.find((c) => c.id === id).cancelada = true; },
+      async empezarConv(id) {
+        const c = convs.find((x) => x.id === id);
+        await this.empezarVivo({ titulo: c.titulo, anfitrion: c.anfitrion, notas: [c.lugar, c.notas].filter(Boolean).join(" · ") });
+        c.vivo_id = vivos[0].id;
+      },
       async empezarVivo(d) {
         if (vivos.some((v) => !v.fin)) throw new Error("Ya hay un plan en vivo. Únete con «Estoy aquí».");
         const yo = personas.find((x) => x.user_id === user?.id)?.id;
@@ -380,6 +406,7 @@
       S.jugadoresMes = d.jugadoresMes || [];
       S.valMedia = Object.fromEntries((d.valResumen || []).map((x) => [x.plan_id, { media: Number(x.media), n: Number(x.n) }]));
       S.valoraciones = d.valoraciones || [];
+      S.convs = (d.convs || []).map((c) => ({ ...c, resp: (d.respConv || []).filter((r) => r.conv_id === c.id) }));
       S.vivos = (d.vivos || []).map((v) => ({ ...v, presentes: (d.presentesVivo || []).filter((x) => x.vivo_id === v.id).sort((a, b) => a.llegada.localeCompare(b.llegada)).map((x) => x.persona_id) }));
       S.conDesde = d.conDesde !== false;
       S.conTema = !!d.conTema;
@@ -768,6 +795,65 @@
   const casaVivo = (v) => { const a = persona(v.anfitrion); return a ? `🏠 En casa de <b>${esc(a.nombre)}</b>` : "📍 Fuera de casa"; };
   const genteVivo = (ids) => `<div class="vivo-gente">${ids.map(persona).filter(Boolean).map((g) => `<button class="vivo-chip" data-a="perfil" data-id="${g.id}">${avatar(g, "sm")}<span>${esc(g.nombre.split(" ")[0])}</span></button>`).join("")}</div>`;
 
+  // ---------- Convocatorias («📣 Hay plan») ----------
+  const fechaLima = (t) => new Date(t).toLocaleDateString("en-CA", { timeZone: TZ });
+  function cuandoTxt(t) {
+    const f = fechaLima(t), h = horaDe(t);
+    if (f === hoy()) return `Hoy a las ${h}`;
+    if (f === sumarDias(hoy(), 1)) return `Mañana a las ${h}`;
+    return `${diaSemana(f)} ${fechaCorta(f)} a las ${h}`;
+  }
+  function faltaTxt(t) {
+    const min = Math.round((Date.parse(t) - Date.now()) / 60000);
+    if (min <= 0) return min > -2 ? "empieza ya" : `empezó ${haceCuanto(t)}`;
+    if (min < 60) return `en ${min} min`;
+    if (min < 36 * 60) { const h = Math.floor(min / 60), m = min % 60; return `en ${h} h${m && h < 5 ? ` ${m} min` : ""}`; }
+    return `en ${Math.round(min / 1440)} días`;
+  }
+  const RESP = [["voy", "✅ Voy"], ["quizas", "🤔 Quizás"], ["no", "❌ No voy"]];
+
+  function tarjetaConv(c) {
+    const quien = persona(c.creado_por), anf = persona(c.anfitrion);
+    const mia = S.yo ? c.resp.find((r) => r.persona_id === S.yo.id)?.respuesta : null;
+    const de = (k) => c.resp.filter((r) => r.respuesta === k).map((r) => persona(r.persona_id)).filter(Boolean);
+    const van = de("voy"), quiz = de("quizas"), no = de("no");
+    const gest = S.admin || (S.yo && c.creado_por === S.yo.id);
+    const cerca = Date.parse(c.cuando) - Date.now() < 3 * 36e5;
+    const nombres = (l) => l.map((x) => esc(x.nombre.split(" ")[0])).join(", ");
+    return `<section class="vivo conv" aria-label="Convocatoria">
+      <div class="vivo-cab"><span class="eyebrow">📣 ${quien ? `${esc(quien.nombre.split(" ")[0])} convoca` : "Convocatoria"}</span><span class="sub">${faltaTxt(c.cuando)}</span></div>
+      <div class="vivo-tit">${esc(c.titulo)}</div>
+      <div class="conv-cuando">🕘 <b>${cuandoTxt(c.cuando)}</b></div>
+      <div class="vivo-casa">${anf ? `🏠 En casa de <b>${esc(anf.nombre)}</b>` : `📍 ${c.lugar ? esc(c.lugar) : "Fuera de casa"}`}</div>
+      ${c.notas ? `<p class="vivo-notas">${esc(c.notas)}</p>` : ""}
+      <div class="vivo-sub"><b>${van.length}</b> ${van.length === 1 ? "va" : "van"}${quiz.length ? ` · ${quiz.length} quizás` : ""}${no.length ? ` · ${no.length} no` : ""}</div>
+      ${van.length ? genteVivo(van.map((x) => x.id)) : ""}
+      ${quiz.length || no.length ? `<p class="conv-otros">${quiz.length ? `🤔 ${nombres(quiz)}` : ""}${quiz.length && no.length ? "<br>" : ""}${no.length ? `❌ ${nombres(no)}` : ""}</p>` : ""}
+      ${!S.user ? `<div class="vivo-acc"><button class="btn" data-a="login">Entrar para responder</button></div>` : !S.yo ? `<div class="vivo-acc"><button class="btn" data-a="quien-soy">¿Quién eres?</button></div>`
+        : `<div class="seg conv-seg" role="group" aria-label="Tu respuesta">${RESP.map(([k, l]) => `<button class="${mia === k ? "on" : ""}" data-a="conv-resp" data-id="${c.id}" data-v="${k}" aria-pressed="${mia === k}">${l}</button>`).join("")}</div>`}
+      ${(cerca && S.yo && !vivoActivo()) || gest ? `<div class="vivo-acc">
+        ${cerca && S.yo && !vivoActivo() ? `<button class="btn" data-a="conv-empezar" data-id="${c.id}">🔴 Empezar en vivo</button>` : ""}
+        ${gest ? `<button class="btn peligro" data-a="conv-cancelar" data-id="${c.id}">Cancelar plan</button>` : ""}</div>` : ""}
+    </section>`;
+  }
+
+  function hojaConv() {
+    // Por defecto: hoy a las 21:00 (o en una hora si ya es tarde), en la hora del aparato
+    const d = new Date();
+    if (d.getHours() >= 20) { d.setHours(d.getHours() + 1, d.getMinutes() < 30 ? 30 : 60, 0, 0); } else d.setHours(21, 0, 0, 0);
+    const local = (x) => new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    abrirHoja(`${cabHoja("📣 Hay plan", "Avisa a todo el grupo")}
+      <form id="f-conv">
+        <label class="campo"><span>¿Qué plan es?</span><input name="titulo" required maxlength="80" placeholder="Asado, pelis, pichanga…"></label>
+        <label class="campo"><span>¿Cuándo?</span><input type="datetime-local" name="cuando" required value="${local(d)}" min="${local(new Date())}"></label>
+        <label class="campo"><span>¿Dónde?</span><select name="anfitrion"><option value="">Fuera de casa</option>${S.personas.map((p) => `<option value="${p.id}" ${S.yo?.id === p.id ? "" : ""}>En casa de ${esc(p.nombre)}</option>`).join("")}</select></label>
+        <label class="campo" id="campo-lugar"><span>Lugar (opcional)</span><input name="lugar" maxlength="80" placeholder="Bar, cancha, playa…"></label>
+        <label class="campo"><span>Nota (opcional)</span><input name="notas" maxlength="200" placeholder="Traed hielo, cada uno pone 20…"></label>
+        <p class="ayuda">Llega una notificación a todos los que tienen los avisos activados y sale en Inicio para que respondan Voy / Quizás / No voy.</p>
+        <div class="pie-hoja"><button class="btn full" type="submit">📣 Avisar a todos</button></div>
+      </form>`);
+  }
+
   function tarjetaVivo() {
     const v = vivoActivo();
     let html = "";
@@ -786,9 +872,14 @@
           ${gest ? `<button class="btn sec" data-a="vivo-gente" data-id="${v.id}">＋ Gente</button><button class="btn sec" data-a="vivo-editar" data-id="${v.id}">Editar</button><button class="btn peligro" data-a="vivo-terminar" data-id="${v.id}">Terminar</button>` : ""}
         </div>
       </section>`;
-    } else if (S.yo || S.admin) {
-      html += `<button class="vivo-empezar" data-a="vivo-nuevo"><span class="vivo-pulso apagado" aria-hidden="true"></span><span><b>¿Estáis de plan?</b><span class="sub">Empieza un plan en vivo para que el resto lo vea</span></span><span class="wt-flecha">→</span></button>`;
     }
+    if (S.yo || S.admin) {
+      html += `<div class="botones-plan">
+        <button class="vivo-empezar conv-btn" data-a="conv-nueva"><span class="bp-ic" aria-hidden="true">📣</span><span><b>Hay plan</b><span class="sub">Avisa al grupo</span></span></button>
+        ${v ? "" : `<button class="vivo-empezar" data-a="vivo-nuevo"><span class="vivo-pulso apagado" aria-hidden="true"></span><span><b>Plan en vivo</b><span class="sub">Ya estáis de plan</span></span></button>`}
+      </div>`;
+    }
+    html += (S.convs || []).map(tarjetaConv).join("");
     for (const r of vivosRecientes()) {
       const p = S.planes.find((x) => x.id === r.plan_id);
       const pend = S.admin ? (S.solicitudes || []).filter((x) => x.plan_id === p.id && x.estado === "pendiente").length : 0;
@@ -1907,6 +1998,10 @@
     "cerrar-wrapped": () => cerrarWrapped(),
     "w-sig": () => { if (wrapped.i < wrapped.pantallas.length - 1) { wrapped.i++; pintarWrapped(); } else cerrarWrapped(); },
     "w-ant": () => { if (wrapped.i > 0) { wrapped.i--; pintarWrapped(); } },
+    "conv-nueva": () => { if (!S.yo) { if (puedeAnotar()) toast("Primero elige tu perfil", true); return; } hojaConv(); },
+    "conv-resp": async (d) => { await hacer(() => api.responderConv(d.id, d.v), { voy: "¡Apuntado! ✅", quizas: "Anotado: quizás 🤔", no: "Anotado: no vas" }[d.v]); },
+    "conv-cancelar": async (d) => { if (confirm("¿Cancelar este plan? Se avisará a todos.")) await hacer(() => api.cancelarConv(d.id), "Plan cancelado"); },
+    "conv-empezar": async (d) => { await hacer(() => api.empezarConv(d.id), "🔴 ¡Plan en vivo! Pulsad «Estoy aquí»"); },
     "vivo-nuevo": () => { if (puedeAnotar()) hojaVivo(null); },
     "vivo-editar": (d) => hojaVivo(S.vivos.find((v) => v.id === d.id)),
     "vivo-gente": (d) => hojaGenteVivo(S.vivos.find((v) => v.id === d.id)),
@@ -2065,6 +2160,7 @@
       } catch (e) { toast(msgError(e), true); }
       return;
     }
+    if (ev.target.matches("#f-conv [name=anfitrion]")) { $("#campo-lugar").style.display = ev.target.value ? "none" : ""; return; }
     if (ev.target.matches("#f-plan [name=fecha]") && ev.target.value) { guardarCampos(); borrador.fecha = ev.target.value; repintarPlan(); }
   });
 
@@ -2127,6 +2223,16 @@
       btn.disabled = true;
       if (await hacer(() => api.ponerClaveGrupo(clave), "Contraseña del grupo guardada")) f.reset();
       btn.disabled = false;
+      return;
+    }
+    if (f.id === "f-conv") {
+      const t = new Date(f.cuando.value);
+      const d = { titulo: f.titulo.value.trim(), anfitrion: f.anfitrion.value || null, lugar: f.lugar.value.trim(), notas: f.notas.value.trim(), cuando: isNaN(t) ? null : t.toISOString() };
+      if (!d.titulo) return toast("Ponle un nombre al plan", true);
+      if (!d.cuando) return toast("Elige cuándo es", true);
+      btn.disabled = true;
+      if (await hacer(() => api.convocar(d), "📣 ¡Aviso enviado al grupo!")) { cerrarHoja(); location.hash = "#inicio"; }
+      else btn.disabled = false;
       return;
     }
     if (f.id === "f-vivo") {
