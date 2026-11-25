@@ -1,8 +1,8 @@
 /* BMSN — service worker: abre la app al instante y sin señal muestra lo último guardado.
    Nunca guarda nada de Supabase (datos y sesión siempre van directo a la red). */
-const VERSION = "bmsn-v30";
+const VERSION = "bmsn-v31";
 const BASE = [
-  "./", "./index.html", "./app.js?v=30", "./styles.css?v=30", "./config.js?v=30", "./manifest.webmanifest",
+  "./", "./index.html", "./app.js?v=31", "./styles.css?v=31", "./config.js?v=31", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png", "./icons/favicon-64.png", "./icons/logo.png",
 ];
 

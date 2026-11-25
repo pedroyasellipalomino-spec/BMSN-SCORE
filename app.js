@@ -121,13 +121,15 @@
         ]);
         const votos = S.user ? await q(sb.from("votos").select("encuesta_id,user_id,email,opcion,fecha")) : [];
         const jugadoresMes = await opcional(sb.from("jugadores_mes").select("mes,persona_id"));
+        const vivos = await opcional(sb.from("planes_vivo").select("*").or(`fin.is.null,fin.gt.${new Date(Date.now() - 864e5).toISOString()}`).order("inicio", { ascending: false }).limit(5));
+        const presentesVivo = vivos.length ? await opcional(sb.from("presentes_vivo").select("vivo_id,persona_id,llegada").in("vivo_id", vivos.map((v) => v.id))) : [];
         const [valResumen, valoraciones] = await Promise.all([
           opcional(sb.rpc("valoraciones_resumen")),
           S.user ? opcional(sb.from("valoraciones").select("plan_id,persona_id,estrellas,comentario,editado")) : [],
         ]);
         const solicitudes = S.user ? await opcional(sb.from("solicitudes").select("*").order("creado", { ascending: false }).limit(200)) : [];
         const emailsAdmin = S.admin ? await opcional(sb.from("admins").select("email")) : [];
-        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes, valResumen, valoraciones };
+        return { personas, planes, asist, encuestas, resultados, votos, participacion, admins: admins.map((a) => a.persona_id), migracion, fotos, emailsAdmin: emailsAdmin.map((a) => a.email), claveGrupo, conDesde, votantes, nominados, conTema, solicitudes, jugadoresMes, valResumen, valoraciones, vivos, presentesVivo };
       },
       reclamarAdmin: () => q(sb.rpc("reclamar_admin")),
       guardarPlan: (p) => q(sb.rpc("guardar_plan", { p_id: p.id || null, p_fecha: p.fecha, p_titulo: p.titulo, p_anfitrion: p.anfitrion, p_asistentes: p.asistentes, p_notas: p.notas || "" })),
@@ -163,6 +165,12 @@
       listarCopias: () => q(sb.rpc("listar_copias")),
       descargarCopia: (id) => q(sb.rpc("descargar_copia", { p_id: id ?? null })),
       automatizar: () => sb.rpc("automatizar_encuestas").then((r) => (r.error ? "nada" : r.data)),
+      empezarVivo: (d) => q(sb.rpc("empezar_plan_vivo", { p_titulo: d.titulo, p_anfitrion: d.anfitrion || null, p_notas: d.notas || "" })),
+      editarVivo: (id, d) => q(sb.rpc("editar_plan_vivo", { p_vivo: id, p_titulo: d.titulo, p_anfitrion: d.anfitrion || null, p_notas: d.notas || "" })),
+      estoyAqui: (id, persona) => q(sb.rpc("estoy_aqui", { p_vivo: id, p_persona: persona || null })),
+      quitarPresente: (id, persona) => q(sb.rpc("quitar_presente", { p_vivo: id, p_persona: persona || null })),
+      terminarVivo: (id) => q(sb.rpc("terminar_plan_vivo", { p_vivo: id })),
+      borrarVivo: (id) => q(sb.rpc("borrar_plan_vivo", { p_vivo: id })),
       valorar: (plan, estrellas, comentario) => q(sb.rpc("valorar_plan", { p_plan: plan, p_estrellas: estrellas, p_comentario: comentario || "" })),
       ponerJugadorMes: (mes, persona) => q(sb.from("jugadores_mes").upsert({ mes, persona_id: persona })),
       quitarJugadorMes: (mes) => q(sb.from("jugadores_mes").delete().eq("mes", mes)),
@@ -207,6 +215,7 @@
     const emailsAdmin = [];
     const solicitudes = [];
     const jugMes = [];
+    const vivos = [], presVivo = [];
     // Valoraciones de ejemplo en los planes recientes
     const vals = [];
     [...planes].sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 8).forEach((pl, i) => asist.filter((a) => a.plan_id === pl.id).forEach((a, j) => {
@@ -227,6 +236,7 @@
           participacion: personas.map((p, i) => ({ persona_id: p.id, votos: p.user_id === "demo" ? Object.keys(mio).length : (i % 3) + 1 })),
           admins: personas.filter((p) => p.user_id === "demo").map((p) => p.id),
           migracion: true, fotos: true, claveGrupo: true, conDesde: true, conTema: true, solicitudes: [...solicitudes], jugadoresMes: [...jugMes],
+          vivos: vivos.map((v) => ({ ...v })), presentesVivo: presVivo.map((x) => ({ ...x })),
           valResumen: Object.values(vals.filter((v) => asist.some((a) => a.plan_id === v.plan_id && a.persona_id === v.persona_id)).reduce((o, v) => {
             const r = (o[v.plan_id] ??= { plan_id: v.plan_id, suma: 0, n: 0 }); r.suma += v.estrellas; r.n++; return o; }, {})).map((r) => ({ plan_id: r.plan_id, media: r.suma / r.n, n: r.n })),
           valoraciones: !user ? [] : /^miembro/i.test(user.email) ? vals.filter((v) => v.persona_id === personas.find((x) => x.user_id === user.id)?.id).map((v) => ({ ...v })) : vals.map((v) => ({ ...v })), emailsAdmin: user ? [user.email, ...emailsAdmin] : [],
@@ -269,6 +279,34 @@
       },
       async votar(id, opcion) { return this.votarVarios(id, [opcion]); },
       async ponerTema() {},
+      async empezarVivo(d) {
+        if (vivos.some((v) => !v.fin)) throw new Error("Ya hay un plan en vivo. Únete con «Estoy aquí».");
+        const yo = personas.find((x) => x.user_id === user?.id)?.id;
+        const v = { id: uid(), titulo: d.titulo, anfitrion: d.anfitrion || null, notas: d.notas || "", iniciado_por: yo, inicio: new Date().toISOString(), fin: null, plan_id: null };
+        vivos.unshift(v);
+        [...new Set([yo, d.anfitrion].filter(Boolean))].forEach((x) => presVivo.push({ vivo_id: v.id, persona_id: x, llegada: v.inicio }));
+      },
+      async editarVivo(id, d) { Object.assign(vivos.find((v) => v.id === id), { titulo: d.titulo, anfitrion: d.anfitrion || null, notas: d.notas || "" }); },
+      async estoyAqui(id, persona) {
+        const q2 = persona || personas.find((x) => x.user_id === user?.id)?.id;
+        if (!presVivo.some((x) => x.vivo_id === id && x.persona_id === q2)) presVivo.push({ vivo_id: id, persona_id: q2, llegada: new Date().toISOString() });
+      },
+      async quitarPresente(id, persona) {
+        const q2 = persona || personas.find((x) => x.user_id === user?.id)?.id;
+        const i = presVivo.findIndex((x) => x.vivo_id === id && x.persona_id === q2); if (i >= 0) presVivo.splice(i, 1);
+      },
+      async terminarVivo(id) {
+        const v = vivos.find((x) => x.id === id);
+        const gente = presVivo.filter((x) => x.vivo_id === id).map((x) => x.persona_id);
+        v.fin = new Date().toISOString();
+        if (!gente.length) return;
+        const pl = { id: uid(), fecha: hoy(), titulo: v.titulo, anfitrion: v.anfitrion, notas: v.notas };
+        planes.push(pl); v.plan_id = pl.id;
+        const directo = !/^miembro/i.test(user?.email || "");
+        gente.forEach((g) => (directo ? asist.push({ plan_id: pl.id, persona_id: g })
+          : solicitudes.unshift({ id: uid(), tipo: "asistencia", persona_id: g, plan_id: pl.id, estado: "pendiente", creado: v.fin, datos: {} })));
+      },
+      async borrarVivo(id) { vivos.splice(vivos.findIndex((v) => v.id === id), 1); },
       async valorar(plan, estrellas, comentario) {
         const yo = personas.find((x) => x.user_id === user?.id)?.id;
         const i = vals.findIndex((v) => v.plan_id === plan && v.persona_id === yo);
@@ -342,6 +380,7 @@
       S.jugadoresMes = d.jugadoresMes || [];
       S.valMedia = Object.fromEntries((d.valResumen || []).map((x) => [x.plan_id, { media: Number(x.media), n: Number(x.n) }]));
       S.valoraciones = d.valoraciones || [];
+      S.vivos = (d.vivos || []).map((v) => ({ ...v, presentes: (d.presentesVivo || []).filter((x) => x.vivo_id === v.id).sort((a, b) => a.llegada.localeCompare(b.llegada)).map((x) => x.persona_id) }));
       S.conDesde = d.conDesde !== false;
       S.conTema = !!d.conTema;
       S.claveGrupo = d.claveGrupo ?? null; // null = aún no se ejecutó 04_clave_grupo.sql
@@ -406,6 +445,7 @@
   function render() {
     const v = vistaActual();
     $$(".nav a").forEach((a) => a.classList.toggle("activo", a.dataset.nav === v));
+    $('.nav a[data-nav="inicio"]')?.classList.toggle("en-vivo", !!(S.cargado && vivoActivo()));
     renderCuenta();
     if (!api) { $("#vista").innerHTML = bannerError("BMSN no está conectado a la base de datos (falta config.js)."); return; }
     if (!S.cargado) return;
@@ -490,7 +530,7 @@
     const tarjetaW = nW >= 5 ? `<button class="wrapped-tarjeta" data-a="wrapped" data-v="${anioW}"><span class="wt-ic">🎁</span><span><span class="eyebrow">${dispW?.publico ? "Ya disponible" : "Vista previa · solo admin · sale el 29 dic"}</span><b>BMSN Wrapped ${anioW}</b><span class="sub">Tu año en planes, en 1 minuto</span></span><span class="wt-flecha">→</span></button>` : "";
     const pv = planPorValorar();
     const tarjetaV = pv ? `<button class="wrapped-tarjeta val-aviso" data-a="ver-plan" data-id="${pv.id}"><span class="wt-ic">⭐</span><span><span class="eyebrow">Pendiente de valorar · ${diaSemana(pv.fecha)} ${fechaCorta(pv.fecha)}</span><b>${esc(pv.titulo)}</b><span class="sub">¿Qué tal estuvo? Ponle estrellas</span></span><span class="wt-flecha">→</span></button>` : "";
-    return cartel + tarjetaW + tarjetaV + `<div class="inicio-grid"><div class="col-a">
+    return tarjetaVivo() + cartel + tarjetaW + tarjetaV + `<div class="inicio-grid"><div class="col-a">
       ${selectorPeriodo()}
       <div class="hero">
         <div><div class="display">${planes.length}</div><div class="sub">plan${planes.length === 1 ? "" : "es"} ${etiqueta}</div></div>
@@ -713,16 +753,97 @@
       </div></div>`;
   }
 
+  // ---------- Plan en vivo ----------
+  const vivoActivo = () => (S.vivos || []).find((v) => !v.fin) || null;
+  const vivosRecientes = () => (S.vivos || []).filter((v) => v.fin && v.plan_id && Date.now() - Date.parse(v.fin) < 864e5 && S.planes.some((p) => p.id === v.plan_id));
+  const gestionaVivo = (v) => S.admin || (!!S.yo && v.iniciado_por === S.yo.id);
+  const horaDe = (t) => new Date(t).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: TZ });
+  function haceCuanto(t) {
+    const min = Math.max(0, Math.round((Date.now() - Date.parse(t)) / 60000));
+    if (min < 1) return "ahora mismo";
+    if (min < 60) return `hace ${min} min`;
+    const h = Math.floor(min / 60), m = min % 60;
+    return `hace ${h} h${m && h < 5 ? ` ${m} min` : ""}`;
+  }
+  const casaVivo = (v) => { const a = persona(v.anfitrion); return a ? `🏠 En casa de <b>${esc(a.nombre)}</b>` : "📍 Fuera de casa"; };
+  const genteVivo = (ids) => `<div class="vivo-gente">${ids.map(persona).filter(Boolean).map((g) => `<button class="vivo-chip" data-a="perfil" data-id="${g.id}">${avatar(g, "sm")}<span>${esc(g.nombre.split(" ")[0])}</span></button>`).join("")}</div>`;
+
+  function tarjetaVivo() {
+    const v = vivoActivo();
+    let html = "";
+    if (v) {
+      const estoy = S.yo && v.presentes.includes(S.yo.id), gest = gestionaVivo(v);
+      html += `<section class="vivo" aria-label="Plan en vivo">
+        <div class="vivo-cab"><span class="vivo-pulso" aria-hidden="true"></span><span class="eyebrow">En vivo · desde las ${horaDe(v.inicio)}</span><span class="sub">${haceCuanto(v.inicio)}</span></div>
+        <div class="vivo-tit">${esc(v.titulo)}</div>
+        <div class="vivo-casa">${casaVivo(v)}</div>
+        ${v.notas ? `<p class="vivo-notas">${esc(v.notas)}</p>` : ""}
+        <div class="vivo-sub"><b>${v.presentes.length}</b> ${v.presentes.length === 1 ? "persona está" : "personas están"} aquí</div>
+        ${genteVivo(v.presentes)}
+        <div class="vivo-acc">
+          ${!S.user ? `<button class="btn" data-a="login">Entrar para apuntarme</button>` : !S.yo ? `<button class="btn" data-a="quien-soy">¿Quién eres?</button>`
+            : estoy ? `<button class="btn sec" data-a="vivo-me-voy" data-id="${v.id}">Ya no estoy</button>` : `<button class="btn" data-a="vivo-estoy" data-id="${v.id}">🙋 Estoy aquí</button>`}
+          ${gest ? `<button class="btn sec" data-a="vivo-gente" data-id="${v.id}">＋ Gente</button><button class="btn sec" data-a="vivo-editar" data-id="${v.id}">Editar</button><button class="btn peligro" data-a="vivo-terminar" data-id="${v.id}">Terminar</button>` : ""}
+        </div>
+      </section>`;
+    } else if (S.yo || S.admin) {
+      html += `<button class="vivo-empezar" data-a="vivo-nuevo"><span class="vivo-pulso apagado" aria-hidden="true"></span><span><b>¿Estáis de plan?</b><span class="sub">Empieza un plan en vivo para que el resto lo vea</span></span><span class="wt-flecha">→</span></button>`;
+    }
+    for (const r of vivosRecientes()) {
+      const p = S.planes.find((x) => x.id === r.plan_id);
+      const pend = S.admin ? (S.solicitudes || []).filter((x) => x.plan_id === p.id && x.estado === "pendiente").length : 0;
+      const gente = [...new Set([...p.asistentes, ...r.presentes])];
+      html += `<section class="vivo terminado" aria-label="Plan terminado">
+        <div class="vivo-cab"><span class="eyebrow">✓ Terminado ${haceCuanto(r.fin)}</span><span class="sub">${horaDe(r.inicio)}–${horaDe(r.fin)}</span></div>
+        <div class="vivo-tit">${esc(p.titulo)}</div>
+        <div class="vivo-casa">${casaVivo(p)} · ${gente.length} persona${gente.length === 1 ? "" : "s"}</div>
+        ${genteVivo(gente)}
+        ${seccionValoracion(p).replace('class="seccion val-seccion"', 'class="val-seccion vivo-val"')}
+        <div class="vivo-acc">
+          <button class="btn sec" data-a="ver-plan" data-id="${p.id}">Ver plan</button>
+          ${pend ? `<a class="btn" href="#admin">Revisar ${pend} asistencia${pend === 1 ? "" : "s"}</a>` : ""}
+        </div>
+        <p class="ayuda" style="margin:10px 0 0">Se queda aquí hasta mañana a las ${horaDe(Date.parse(r.fin) + 864e5)} para que lo valoréis.</p>
+      </section>`;
+    }
+    return html;
+  }
+
+  function hojaVivo(v) {
+    const ed = v || {};
+    abrirHoja(`${cabHoja(v ? "Editar plan en vivo" : "Plan en vivo", v ? "" : "Para que el grupo vea dónde estáis")}
+      <form id="f-vivo" ${v ? `data-id="${v.id}"` : ""}>
+        <label class="campo"><span>¿Qué plan es?</span><input name="titulo" required maxlength="80" value="${esc(ed.titulo || "")}" placeholder="Asado, pelis, previa…"></label>
+        <label class="campo"><span>¿Dónde?</span><select name="anfitrion"><option value="">Fuera de casa</option>${S.personas.map((p) => `<option value="${p.id}" ${ed.anfitrion === p.id ? "selected" : ""}>En casa de ${esc(p.nombre)}</option>`).join("")}</select></label>
+        <label class="campo"><span>Nota (opcional)</span><input name="notas" maxlength="200" value="${esc(ed.notas || "")}" placeholder="Traed hielo, se juega FIFA…"></label>
+        ${v ? "" : `<p class="ayuda">Quedarás apuntado tú${S.yo ? "" : ""} y quien pone la casa. Cada uno pulsa «Estoy aquí» desde su móvil. Al terminar, el admin confirma quién fue.</p>`}
+        <div class="pie-hoja">${v && S.admin ? `<button type="button" class="btn peligro" data-a="vivo-borrar" data-id="${v.id}">Borrar</button>` : ""}<button class="btn full" type="submit">${v ? "Guardar" : "🔴 Empezar plan en vivo"}</button></div>
+      </form>`);
+  }
+
+  function hojaGenteVivo(v) {
+    if (!v) return cerrarHoja();
+    const fuera = S.personas.filter((p) => !v.presentes.includes(p.id));
+    abrirHoja(`${cabHoja("¿Quién está?", esc(v.titulo))}
+      <p class="sub" style="margin:-8px 0 14px">Para apuntar a quien no tiene la app a mano. Al terminar, el admin confirma la asistencia.</p>
+      <span class="eyebrow">Aquí · ${v.presentes.length}</span>
+      <div class="lista" style="margin:8px 0 18px">${v.presentes.map(persona).filter(Boolean).map((g) => `<div class="fila">${avatar(g)}<span class="cuerpo"><div class="nom">${esc(g.nombre)}</div></span><button class="btn peligro chico" data-a="vivo-quitar" data-id="${v.id}" data-p="${g.id}" aria-label="Quitar a ${esc(g.nombre)}">✕</button></div>`).join("") || `<div class="fila"><span class="cuerpo"><div class="det">Nadie todavía.</div></span></div>`}</div>
+      <span class="eyebrow">Añadir</span>
+      <div class="lista" style="margin-top:8px">${fuera.map((g) => `<button class="fila" data-a="vivo-anadir" data-id="${v.id}" data-p="${g.id}">${avatar(g)}<span class="cuerpo"><div class="nom">${esc(g.nombre)}</div></span><span class="btn chico">＋</span></button>`).join("")}</div>`);
+  }
+
   // ---------- Valoraciones ----------
   const valDe = (p) => S.valMedia?.[p.id] || null;
   const miValoracion = (p) => (S.yo ? (S.valoraciones || []).find((v) => v.plan_id === p.id && v.persona_id === S.yo.id) || null : null);
-  const puedeValorar = (p) => !!S.yo && p.asistentes.includes(S.yo.id) && p.fecha <= hoy();
+  const asistenciaPendiente = (p) => !!S.yo && (S.solicitudes || []).some((x) => x.tipo === "asistencia" && x.plan_id === p.id && x.persona_id === S.yo.id && x.estado === "pendiente");
+  const puedeValorar = (p) => !!S.yo && p.fecha <= hoy() && (p.asistentes.includes(S.yo.id) || asistenciaPendiente(p));
   const estrellas = (media, cls = "") => `<span class="estrellas ${cls}" role="img" aria-label="${dec(media)} de 5 estrellas"><span class="e-base">★★★★★</span><span class="e-lleno" style="width:${Math.max(0, Math.min(5, media)) * 20}%">★★★★★</span></span>`;
   // El plan más reciente al que fui (últimas 2 semanas) y que aún no he valorado
   function planPorValorar() {
     if (!S.yo) return null;
     const desde = sumarDias(hoy(), -14);
-    return S.planes.find((p) => p.fecha >= desde && puedeValorar(p) && !miValoracion(p)) || null;
+    const enVivo = new Set(vivosRecientes().map((v) => v.plan_id));
+    return S.planes.find((p) => p.fecha >= desde && !enVivo.has(p.id) && puedeValorar(p) && !miValoracion(p)) || null;
   }
 
   function seccionValoracion(p) {
@@ -739,7 +860,7 @@
         <div class="val-picker" role="radiogroup" aria-label="Estrellas">${[1, 2, 3, 4, 5].map((n) => `<label title="${n} estrella${n === 1 ? "" : "s"}"><input type="radio" name="estrellas" value="${n}" ${mia?.estrellas === n ? "checked" : ""}><span>★</span></label>`).join("")}</div>
         <input name="comentario" maxlength="200" value="${esc(mia?.comentario || "")}" placeholder="Comentario (opcional)">
         <div class="val-botones"><button class="btn chico" type="submit">${mia ? "Actualizar" : "Valorar"}</button>${mia ? `<button type="button" class="btn sec chico" data-a="quitar-valoracion" data-id="${p.id}">Quitar</button>` : ""}</div>
-        <p class="ayuda" style="margin:8px 0 0">Todos ven la media. Tus estrellas y tu comentario solo los ve el admin.</p>
+        <p class="ayuda" style="margin:8px 0 0">${!p.asistentes.includes(S.yo.id) ? "Tu voto contará cuando el admin confirme que fuiste. " : ""}Todos ven la media. Tus estrellas y tu comentario solo los ve el admin.</p>
       </form>` : "";
     const lista = detalle.length ? `<div class="lista val-detalle">${detalle.map((v) => { const q = persona(v.persona_id); return `<div class="fila">${avatar(q, "sm")}<span class="cuerpo"><div class="nom">${esc(q?.nombre || "?")}</div>${v.comentario ? `<div class="det">“${esc(v.comentario)}”</div>` : ""}</span>${estrellas(v.estrellas)}</div>`; }).join("")}</div>
       <p class="ayuda" style="margin:8px 0 0">🔒 El detalle solo lo ves tú como admin.</p>` : "";
@@ -768,7 +889,7 @@
     const yoEmail = S.user?.email?.toLowerCase();
     const pendientes = (S.solicitudes || []).filter((x) => x.estado === "pendiente");
     return `<div class="titulo-vista"><h1 class="h2">Panel de admin</h1><span class="insignia">Admin</span></div>
-      ${pendientes.length ? `<div class="seccion" style="margin-top:0"><div class="cab"><span class="eyebrow">Solicitudes pendientes · ${pendientes.length}</span></div>
+      ${pendientes.length ? `<div class="seccion" style="margin-top:0"><div class="cab"><span class="eyebrow">Solicitudes pendientes · ${pendientes.length}</span>${pendientes.filter((x) => x.tipo === "asistencia").length > 1 ? `<button class="btn chico" data-a="sol-todas">✓ Aprobar asistencias</button>` : ""}</div>
         <div class="lista">${pendientes.map(filaSolicitud).join("")}</div></div>` : ""}
       ${!S.migracion ? bannerError("Falta ejecutar <b>supabase/02_perfiles.sql</b> en Supabase.") : !S.fotos ? `<div class="banner"><span>Para activar las fotos de perfil ejecuta <b>supabase/03_fotos_admin.sql</b> en Supabase.</span></div>` : ""}
       <div class="stats admin-stats">
@@ -1786,7 +1907,25 @@
     "cerrar-wrapped": () => cerrarWrapped(),
     "w-sig": () => { if (wrapped.i < wrapped.pantallas.length - 1) { wrapped.i++; pintarWrapped(); } else cerrarWrapped(); },
     "w-ant": () => { if (wrapped.i > 0) { wrapped.i--; pintarWrapped(); } },
-    "quitar-valoracion": async (d) => { if (await hacer(() => api.valorar(d.id, null, ""), "Valoración quitada")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
+    "vivo-nuevo": () => { if (puedeAnotar()) hojaVivo(null); },
+    "vivo-editar": (d) => hojaVivo(S.vivos.find((v) => v.id === d.id)),
+    "vivo-gente": (d) => hojaGenteVivo(S.vivos.find((v) => v.id === d.id)),
+    "vivo-estoy": async (d) => { await hacer(() => api.estoyAqui(d.id), "¡Apuntado! 🙋"); },
+    "vivo-me-voy": async (d) => { if (confirm("¿Ya no estás en el plan?")) await hacer(() => api.quitarPresente(d.id), "Quitado del plan"); },
+    "vivo-anadir": async (d) => { if (await hacer(() => api.estoyAqui(d.id, d.p), `${persona(d.p)?.nombre.split(" ")[0] || "Persona"} apuntado`)) hojaGenteVivo(S.vivos.find((v) => v.id === d.id)); },
+    "vivo-quitar": async (d) => { if (await hacer(() => api.quitarPresente(d.id, d.p), "Quitado")) hojaGenteVivo(S.vivos.find((v) => v.id === d.id)); },
+    "vivo-terminar": async (d) => {
+      const msg = S.admin ? "¿Terminar el plan? Se guardará con la gente que está apuntada y contará como asistencia."
+        : "¿Terminar el plan? Se guardará y el admin confirmará la asistencia de cada uno.";
+      if (confirm(msg)) await hacer(() => api.terminarVivo(d.id), "Plan terminado. ¡Ahora a valorarlo! ⭐");
+    },
+    "vivo-borrar": async (d) => { if (confirm("¿Borrar este plan en vivo? (No borra planes ya guardados)")) { cerrarHoja(); await hacer(() => api.borrarVivo(d.id), "Borrado"); } },
+    "sol-todas": async () => {
+      const ps = (S.solicitudes || []).filter((x) => x.estado === "pendiente" && x.tipo === "asistencia");
+      if (!ps.length || !confirm(`¿Aprobar las ${ps.length} asistencias pendientes?`)) return;
+      await hacer(async () => { for (const x of ps) await api.resolverSolicitud(x.id, true); }, `${ps.length} asistencias aprobadas ✓`);
+    },
+    "quitar-valoracion": async (d, el) => { const enHoja = !!el.closest("#hoja"); if (await hacer(() => api.valorar(d.id, null, ""), "Valoración quitada") && enHoja) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
     "yo-fui": async (d) => { if (await hacer(() => api.pedirAsistencia(d.id), "Enviado: el admin lo revisará")) hojaVerPlan(S.planes.find((p) => p.id === d.id)); },
     "admin-me-apunto": async (d) => {
       const p = S.planes.find((x) => x.id === d.id);
@@ -1990,12 +2129,22 @@
       btn.disabled = false;
       return;
     }
+    if (f.id === "f-vivo") {
+      const d = { titulo: f.titulo.value.trim(), anfitrion: f.anfitrion.value || null, notas: f.notas.value.trim() };
+      if (!d.titulo) return toast("Ponle un nombre al plan", true);
+      btn.disabled = true;
+      const id = f.dataset.id;
+      if (await hacer(() => (id ? api.editarVivo(id, d) : api.empezarVivo(d)), id ? "Guardado" : "🔴 ¡Plan en vivo! Ya sale en Inicio")) { cerrarHoja(); if (!id) location.hash = "#inicio"; }
+      else btn.disabled = false;
+      return;
+    }
     if (f.id === "f-valorar") {
       const n = +(f.querySelector("[name=estrellas]:checked")?.value || 0);
       if (!n) return toast("Elige de 1 a 5 estrellas", true);
       btn.disabled = true;
       const id = f.dataset.id;
-      if (await hacer(() => api.valorar(id, n, f.comentario.value.trim()), "¡Gracias por valorar!")) hojaVerPlan(S.planes.find((p) => p.id === id));
+      const enHoja = !!f.closest("#hoja");
+      if (await hacer(() => api.valorar(id, n, f.comentario.value.trim()), "¡Gracias por valorar!")) { if (enHoja) hojaVerPlan(S.planes.find((p) => p.id === id)); }
       else btn.disabled = false;
       return;
     }
@@ -2073,6 +2222,9 @@
     if (document.visibilityState === "visible" && S.cargado && !hoja.open && !wrapped && Date.now() - (S.ultimaCarga || 0) > 60000) cargar();
   });
   window.addEventListener("online", () => { if (S.cargado) cargar(); });
+  setInterval(() => {
+    if (S.cargado && vivoActivo() && document.visibilityState === "visible" && !hoja.open && !wrapped && vistaActual() === "inicio" && !document.activeElement?.closest("form")) cargar();
+  }, 45000);
   window.addEventListener("hashchange", () => { if (location.hash === "#wrapped") { if (S.cargado) abrirWrapped(); return; } render(); window.scrollTo(0, 0); });
 
   // ---------- Arranque ----------
